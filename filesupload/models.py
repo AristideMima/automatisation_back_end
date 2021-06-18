@@ -35,4 +35,14 @@ class Arretes(models.Model):
         unique_together = ('num_compte', 'date_deb_arrete', 'date_fin_arrete', 'date_deb_autorisation', 'date_fin_autorisation')
 
 
+class Compte(models.Model):
+    """
 
+    """
+    num_compte = models.CharField(max_length=11, primary_key=True)
+    intitule_compte = models.CharField(max_length=100)
+    type_account = models.CharField(max_length=2, default='E')
+
+
+class Operation(models.Model):
+    code_operation = models.CharField(max_length=5, unique=True)

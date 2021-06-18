@@ -9,6 +9,9 @@ from pyexcel_xlsx import get_data
 from .models import *
 from django.utils.timezone import utc, now
 import re
+from unidecode import unidecode
+from rest_framework.decorators import api_view
+from .models import Historique
 
 # Create your views here.
 
@@ -29,6 +32,28 @@ global regex_dict
 regex_dict = {
     'excel': '[(*.xls)(xlsx]'
 }
+
+
+@api_view(['POST'])
+def make_calcul(request):
+    accounts = request.data['accounts']
+    operations = request.data['operations']
+    options = request.data['options']
+    date_deb = options['date_deb']
+    date_fin = options['date_fin']
+
+    # Filtering part
+    data_filtering = Historique.objects.filter(num_compte__in=accounts, date_comptable__lte=date_fin,
+                                               date_comptable__gte=date_deb, date_valeur__lte=date_fin,
+                                               date_valeur__gte=date_deb
+                                               ).exclude(code_operation__in=operations).values()
+
+
+    df = pd.DataFrame(data_filtering)
+
+    print(df.head())
+
+    return Response(206)
 
 
 class FileUpload(views.APIView):
@@ -74,7 +99,7 @@ class FileUpload(views.APIView):
 
             else:
                 pass
-                data_excel = pd.read_csv(request.FILES.get('file'), sep = '\n', header = None, squeeze = True)
+                data_excel = pd.read_csv(request.FILES.get('file'), sep='\n', header=None, squeeze=True)
                 print(data_excel.head())
                 load_data_txt(data_excel.copy())
 
@@ -85,6 +110,8 @@ class FileUpload(views.APIView):
 
 # Load datas excel file
 def load_data_excel(data_excel):
+    accounts = {}
+    operations = set()
 
     for i in range(len(data_excel)):
 
@@ -102,15 +129,47 @@ def load_data_excel(data_excel):
         hist.sens = data['Sens']
         hist.montant = data['Montant']
 
+        operations.add(hist.code_operation)
+
+        if hist.num_compte not in accounts.keys():
+
+            type_account = 'E'
+
+            if 'courant' in unidecode(hist.intitule_compte.lower()) or hist.code_operation == 100:
+                type_account = 'C'
+            accounts[hist.num_compte] = []
+            accounts[hist.num_compte].append(hist.intitule_compte)
+            accounts[hist.num_compte].append(type_account)
         try:
             hist.save()
+
         except Exception as e:
             print(e)
+
+    # Save operations
+    if len(operations) != 0:
+        for op in operations:
+            operation = Operation()
+            operation.code_operation = op
+
+            try:
+                operation.save()
+            except Exception as e:
+                print(e)
+
+    # Save accounts
+    if len(list(accounts.keys())) != 0:
+
+        for account in list(accounts.keys()):
+            compte = Compte()
+            compte.num_compte = account
+            compte.intitule_compte = accounts[account][0]
+            compte.type_account = accounts[account][1]
+            compte.save()
 
 
 # load datas txt file
 def load_data_txt(data_txt):
-
     auto_part = 30
     stri = data_txt.tail(auto_part).values.tolist()
     string_datas = " ".join(stri)
@@ -119,8 +178,8 @@ def load_data_txt(data_txt):
     regex_dict = {
         'code': '\d{4} -',
         'account': 'XAF-\d{11}-\d{2}',
-        'dates' : '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)',
-        'amount' : '([0-9]+\.)+(\d{3}) XAF',
+        'dates': '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)',
+        'amount': '([0-9]+\.)+(\d{3}) XAF',
         'taxe_frais': 'TAXE/FRAIS{}'.format(reg_numb),
         'taxe_com_mvt': 'TAXE/COMMISSION DE MOUVEMENT{}'.format(reg_numb),
         'com_mvt': 'COMMISSION DE MOUVEMENT{}'.format(reg_numb),
@@ -133,7 +192,7 @@ def load_data_txt(data_txt):
 
     datas = string_datas
 
-    def get_value(colname, position, sep = " "):
+    def get_value(colname, position, sep=" "):
         """
         :param: column name, position
         :return: corresponded value
