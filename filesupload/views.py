@@ -2,9 +2,10 @@ from django.shortcuts import render
 from rest_framework import views
 from rest_framework.parsers import BaseParser, MultiPartParser
 from rest_framework.response import Response
+from django.http.response import StreamingHttpResponse
 import pandas as pd
 import pathlib
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pyexcel_xlsx import get_data
 from .models import *
 from django.utils.timezone import utc, now
@@ -12,9 +13,9 @@ import re
 from unidecode import unidecode
 from rest_framework.decorators import api_view
 from .models import Historique
+from io import StringIO
 
 # Create your views here.
-
 
 # class FileParser(BaseParser):
 #     """
@@ -33,14 +34,15 @@ regex_dict = {
     'excel': '[(*.xls)(xlsx]'
 }
 
-
 @api_view(['POST'])
 def make_calcul(request):
+
     accounts = request.data['accounts']
     operations = request.data['operations']
     options = request.data['options']
     date_deb = options['date_deb']
     date_fin = options['date_fin']
+    solde_initial = options['solde_initial']
 
     # Filtering part
     data_filtering = Historique.objects.filter(num_compte__in=accounts, date_comptable__lte=date_fin,
@@ -48,12 +50,40 @@ def make_calcul(request):
                                                date_valeur__gte=date_deb
                                                ).exclude(code_operation__in=operations).values()
 
+    if len(data_filtering) == 0:
+        return Response(500)
 
-    df = pd.DataFrame(data_filtering)
+    # print(data_filtering)
 
-    print(df.head())
+    # Get filter datas by arretes
 
-    return Response(206)
+    dataframes = []
+
+    for account in accounts:
+
+        datas = list(Arretes.objects.filter(num_compte__in=accounts).values())
+
+        datas_acc = list(Compte.objects.filter(num_compte__in=accounts).values())
+        account_type = datas_acc[0]['type_account']
+
+        # datas_accounts = {x['num_compte']:  x['type_account'] for x in datas_acc}
+
+        data_filter_arrete = {x['num_compte']:  [x['date_deb_autorisation'], x['date_fin_autorisation'], x['montant']] for x in datas}
+
+        df = pd.DataFrame(data_filtering)
+
+        filter_datas = range_file(df)
+
+        first = pd.DataFrame(computation_first_table(filter_datas, solde_initial, account,  data_filter_arrete))
+        second = computation_second_table(first, options, account_type)
+
+        dataframes.append({'first': first, 'second': second})
+
+    print(dataframes)
+
+    return Response({
+        'data': dataframes
+    })
 
 
 class FileUpload(views.APIView):
@@ -65,12 +95,9 @@ class FileUpload(views.APIView):
     # file upload function
     def put(self, request, format=None):
 
-        print("received request")
-
         file = request.data['file']
 
         if file:
-            print(file)
             if pathlib.Path(str(file)).suffix in [".xls", ".xlsx"]:
 
                 print(file)
@@ -80,27 +107,13 @@ class FileUpload(views.APIView):
                 data_excel = pd.read_excel(request.FILES.get('file'), skiprows=2, dtype={val: str for val in cols_str},
                                            parse_dates=cols_dates, dayfirst=True)
 
-                data_excel.drop(columns=['Unnamed: 0'], inplace=True)
+                # data_excel.drop(columns=['Unnamed: 0'], inplace=True)
 
-                # get filter datas
-                # filter_data = filter_file(data_excel.copy(), ['00143451101'])
-                #
-                # computation_first = computation_first_table(filter_data.copy())
-                #
-                # computation_second = computation_second_table(computation_first)
-                #
-                # # print(computation_second)
-                #
-                # return Response({
-                #     'table': computation_first,
-                #     'computation': computation_second
-                # })
                 load_data_excel(data_excel.copy())
 
             else:
                 pass
                 data_excel = pd.read_csv(request.FILES.get('file'), sep='\n', header=None, squeeze=True)
-                print(data_excel.head())
                 load_data_txt(data_excel.copy())
 
             return Response("Fichier {} uploadé avec succès".format(file))
@@ -110,6 +123,11 @@ class FileUpload(views.APIView):
 
 # Load datas excel file
 def load_data_excel(data_excel):
+
+    # Delete all rows on new uploading
+    Historique.objects.all().delete()
+    Compte.objects.all().delete()
+
     accounts = {}
     operations = set()
 
@@ -130,8 +148,7 @@ def load_data_excel(data_excel):
         hist.montant = data['Montant']
 
         operations.add(hist.code_operation)
-
-        if hist.num_compte not in accounts.keys():
+        if hist.num_compte not in list(accounts.keys()):
 
             type_account = 'E'
 
@@ -170,6 +187,8 @@ def load_data_excel(data_excel):
 
 # load datas txt file
 def load_data_txt(data_txt):
+
+    code_agence , account_number, amount, dates = None, None, None, None
     auto_part = 30
     stri = data_txt.tail(auto_part).values.tolist()
     string_datas = " ".join(stri)
@@ -199,167 +218,202 @@ def load_data_txt(data_txt):
         """
         value = re.search(regex_dict[colname], datas).group(0).split(sep)[position]
         return value
-
-    code_agence = get_value('code', 0)
-    account_number = get_value('account', 1, "-")
-    amount = int(get_value('amount', 0).replace(".", ""))
-    dates = re.findall(regex_dict['dates'], datas)
-
-    arrete = Arretes()
-
-    # dates conversion
-    new_dates = []
-    for single_date in dates:
-        res = [int(num) for num in single_date[::-1]]
-        new_date = datetime(res[0], res[1], res[2])
-        new_dates.append(new_date)
-
-    arrete.code_agence = code_agence
-    arrete.num_compte = account_number
-    arrete.montant = amount
-    arrete.date_deb_arrete = new_dates[0]
-    arrete.date_fin_arrete = new_dates[1]
-    arrete.date_deb_autorisation = new_dates[2]
-    arrete.date_fin_autorisation = new_dates[3]
-
     try:
-        arrete.save()
+        code_agence = get_value('code', 0)
+        account_number = get_value('account', 1, "-")
+        amount = int(get_value('amount', 0).replace(".", ""))
+        dates = re.findall(regex_dict['dates'], datas)
     except Exception as e:
         print(e)
 
+    if None in [code_agence, account_number,  amount, dates]:
+        return Response(500)
+    else:
+        arrete = Arretes()
+
+        # dates conversion
+        new_dates = []
+        for single_date in dates:
+            res = [int(num) for num in single_date[::-1]]
+            new_date = datetime(res[0], res[1], res[2])
+            new_dates.append(new_date)
+
+        arrete.code_agence = code_agence
+        arrete.num_compte = account_number
+        arrete.montant = amount
+        arrete.date_deb_arrete = new_dates[0]
+        arrete.date_fin_arrete = new_dates[1]
+        arrete.date_deb_autorisation = new_dates[2]
+        arrete.date_fin_autorisation = new_dates[3]
+
+        try:
+            arrete.save()
+        except Exception as e:
+            print(e)
+
 
 # Processing functions
-def filter_file(data_excel, list_account):
+def range_file(data_excel):
     # print(data_excel.head())
 
-    # account_list = ['00143451101']
-    account_vals = data_excel[data_excel['N° compte'].isin(list_account)]
-    # res_filter_date = account_vals.copy()
-
-    period = [datetime(2020, 11, 10), datetime(2021, 11, 25)]
-
-    res_filter_date = account_vals[
-        ((account_vals['Date Comptable'] > period[0]) & (account_vals['Date de Valeur'] > period[0])) &
-        ((account_vals['Date Comptable'] < period[1]) & (account_vals['Date de Valeur'] < period[1]))]
+    res_filter_date = data_excel.copy()
 
     res_filter_date['index'] = res_filter_date.index
-    res_filter_date = res_filter_date.sort_values(by=['Date de Valeur', 'index'])
+    res_filter_date = res_filter_date.sort_values(by=['date_valeur', 'index'])
     res_filter_date = res_filter_date.drop(columns='index')
-    print(res_filter_date.info())
 
     return res_filter_date
 
 
 # Computation function
-def computation_first_table(datas):
+def computation_first_table(datas, solde_initial, account,  filter_compte):
     # Initialization
     cols = ['CPTABLE', 'VALEUR', 'LIBELLES', 'DEBIT_MVTS', 'CREDIT_MVTS', 'SOLDES', 'SOLDE_JOUR', 'jrs', 'DEBITS_NBR',
             'CREDIT_NBR', 'SOLDES_NBR', 'MVTS_13', 'MVTS_14']
     res_data = {col: [] for col in cols}
 
-    solde = 0
+    # Initialization
 
     # Computation part
 
     # First part
-    temp_datas = datas.copy()
+    res_filter_date = datas[datas['num_compte'] == account]
 
-    date_valeur = temp_datas['Date de Valeur'].tolist()
-    sold = 0
+    res_filter_date['index'] = res_filter_date.index
+    res_filter_date = res_filter_date.sort_values(by=['date_valeur', 'index'])
+    res_filter_date = res_filter_date.drop(columns='index')
+    temp_datas = res_filter_date.copy()
+    date_valeur = temp_datas['date_valeur'].tolist()
+
+    sold = solde_initial
     j = 1
 
+    date_initiale = date_valeur[0].replace(day=1) - timedelta(days=1)
+    res_data['VALEUR'].append(date_initiale.strftime('%d/%m/%Y'))
+    res_data['CPTABLE'].append(0)
+    res_data['LIBELLES'].append("SOLDE INITIAL")
+    res_data['DEBIT_MVTS'].append(sold)
+    res_data['CREDIT_MVTS'].append(0)
+    res_data['SOLDES'].append(-res_data['DEBIT_MVTS'][-1] + res_data['CREDIT_MVTS'][-1])
+    soldes = res_data['SOLDES'][-1]
+    jrs = abs((date_valeur[0] - date_initiale).days)
+    res_data['SOLDE_JOUR'].append(soldes if jrs != 0 else 0)
+    res_data['jrs'].append(jrs)
+    debit_nombre = -soldes*jrs if soldes < 0 else 0
+    credit_nombre = soldes*jrs if soldes > 0 else 0
+    res_data['DEBITS_NBR'].append(debit_nombre)
+    res_data['CREDIT_NBR'].append(credit_nombre)
+    soldes_nombre = -soldes if soldes < 0 else 0
+
+    res_data['SOLDES_NBR'].append(soldes_nombre)
+    soldes_nbr = res_data['SOLDES_NBR'][-1]
+
+    # Check if account has a discover
+    if account in list(filter_compte.keys()):
+        if filter_compte[account][0] <= date_initiale <= filter_compte[account][1]:
+            mvt_13 = soldes_nbr*jrs if soldes_nbr <= filter_compte[account][2] else filter_compte[account][2]*jrs
+            mvt_14 = debit_nombre - mvt_13
+
+            res_data['MVTS_13'].append(mvt_13)
+            res_data['MVTS_14'].append(mvt_14)
+    else:
+        res_data['MVTS_13'].append(0)
+        res_data['MVTS_14'].append(0)
+
+    j = 1
+    l = len(date_valeur)
     # Loop and compute values
     for i in range(len(date_valeur)):
 
         # 1 et 2
-        date_cpt = temp_datas.iloc[i]['Date Comptable']
+        date_cpt = temp_datas.iloc[i]['date_comptable']
         date_val = date_valeur[i]
 
-        #     temp = temp_datas[(temp_datas['Date Comptable'] == date_cpt) & (temp_datas['Date de Valeur'] == date_val)]
-
-        res_data['CPTABLE'].append(date_cpt.strftime('%Y-%m-%d'))
-        res_data['VALEUR'].append(date_val.strftime('%Y-%m-%d'))
+        res_data['CPTABLE'].append(date_cpt.strftime('%d/%m/%Y'))
+        res_data['VALEUR'].append(date_val.strftime('%d/%m/%Y'))
 
         # 3
-        res_data['LIBELLES'].append(temp_datas.iloc[i]['Libellé Opération'])
+        res_data['LIBELLES'].append(temp_datas.iloc[i]['libelle_operation'])
 
         # 4 & 5
         debit_mvt = 0
         credit_mvt = 0
-        montant = temp_datas.iloc[i]['Montant']
+        montant = temp_datas.iloc[i]['montant']
 
-        if temp_datas.iloc[i].Sens == "D":
+        if temp_datas.iloc[i].sens == "D":
             debit_mvt = montant
         else:
             credit_mvt = montant
 
-        temp_datas.iloc[0]['Montant']
         res_data['DEBIT_MVTS'].append(debit_mvt)
         res_data['CREDIT_MVTS'].append(credit_mvt)
 
-        # 6
-        sold += + res_data['CREDIT_MVTS'][-1] - res_data['DEBIT_MVTS'][-1]
-        res_data['SOLDES'].append(sold)
+        soldes += res_data['CREDIT_MVTS'][-1] - res_data['DEBIT_MVTS'][-1]
+        res_data['SOLDES'].append(soldes)
 
-        # 8
-        nbj = abs((date_val - date_valeur[j - 1]).days)
-        j = i + 1
-        res_data['jrs'].append(nbj)
+        if j  < l -1:
+            jrs = abs((date_valeur[j] - date_val).days)
+        else:
+            jrs = 0
+        j = j+1
 
-        # 7
-        res_data['SOLDE_JOUR'].append(sold if sold != 0 else 0)
-
-        # 9 & 10 & 11
-        # pour comptes d’épargnes et les comptes en intérêts créditeurs
-        debit_nombre = -sold * nbj if sold < 0 else 0
-        credit_nombre = sold * nbj if sold > 0 else 0
-
+        res_data['SOLDE_JOUR'].append(soldes if jrs != 0 else 0)
+        res_data['jrs'].append(jrs)
+        debit_nombre = -soldes*jrs if soldes < 0 else 0
+        credit_nombre = soldes*jrs if soldes > 0 else 0
         res_data['DEBITS_NBR'].append(debit_nombre)
         res_data['CREDIT_NBR'].append(credit_nombre)
-
-        soldes_nombre = -sold if sold < 0 else 0
+        soldes_nombre = -soldes if soldes < 0 else 0
 
         res_data['SOLDES_NBR'].append(soldes_nombre)
+        soldes_nbr = res_data['SOLDES_NBR'][-1]
 
-        # 12 Découvert non échu
-        dec_amount = 145
-        mvt_13 = sold * nbj if sold <= dec_amount else dec_amount * nbj
-        mvt_14 = debit_nombre - mvt_13
+        # Check if account has a discover
+        if account in list(filter_compte.keys()):
+            if filter_compte[account][0] <= date_initiale <= filter_compte[account][1]:
+                mvt_13 = soldes_nbr*jrs if soldes_nbr <= filter_compte[account][2] else filter_compte[account][2]*jrs
+                mvt_14 = debit_nombre - mvt_13
 
-        res_data['MVTS_13'].append(mvt_13)
-        res_data['MVTS_14'].append(mvt_14)
+                res_data['MVTS_13'].append(mvt_13)
+                res_data['MVTS_14'].append(mvt_14)
+        else:
+            res_data['MVTS_13'].append(0)
+            res_data['MVTS_14'].append(0)
 
     return res_data
 
 
-def computation_second_table(res_data):
+def computation_second_table(res_data, options, account_type):
+
     # taux_interets_debiteurs
-    taux_int_1 = 0.135
-    taux_int_2 = 0.145
-    taux_com_mvts = 0.00025
-    taux_com_dec = 0.00025
-    tva = 0.1925
+    taux_int_1 = options['taux_int_1']/100
+    taux_int_2 = options['taux_int_2']/100
+    taux_com_mvts = options['taux_com']/100
+    taux_com_dec = options['fort_dec']/100
+    tva = options['tva']/100
 
     cols_calcul = ['INT_DEBITEURS_1', 'INT_DEBITEURS_2', 'COM_DE_MVTS', 'COM_DE_DVERT', 'FRAIS_FIXES', 'TVA', 'TOTAL']
     calcul = {col: [] for col in cols_calcul}
 
-    # 14
-    res = sum(res_data['MVTS_13']) * taux_int_1
+    # # 14
+    res = (sum(res_data['MVTS_13']) * taux_int_1)/360
     calcul['INT_DEBITEURS_1'].append(res)
 
     # 15
-    res = (sum(res_data['MVTS_13']) * taux_int_2) / 360
+    res = (sum(res_data['MVTS_14']) * taux_int_2)/360
     calcul['INT_DEBITEURS_2'].append(res)
 
     # 16
-    int_sum = sum(res_data['DEBIT_MVTS']) * taux_com_mvts
-    max_val = max(res_data['DEBIT_MVTS'])
-    res = max_val if int_sum <= max_val else int_sum
-    calcul['COM_DE_MVTS'].append(res)
+    seuil = 2000 if account_type == 'E' else 5000
+
+    int_sum = sum(res_data['DEBIT_MVTS'][1:]) * taux_com_mvts
+    # max_val = max(res_data['DEBIT_MVTS'])
+    res = int_sum if int_sum < seuil else seuil
+    calcul['COM_DE_MVTS'].append(int_sum)
 
     # 17
     total_plus_fort = min(res_data['SOLDE_JOUR'])
-    res = 0 if total_plus_fort >= 0 else total_plus_fort * taux_com_dec
+    res = 0 if total_plus_fort >= 0 else -total_plus_fort * taux_com_dec
     calcul['COM_DE_DVERT'].append(res)
 
     # 18
@@ -378,9 +432,8 @@ def computation_second_table(res_data):
 
     return calcul
 
-
-def whole_process(data_filter):
-    result_data = computation_first_table(data_filter)
-    compute = computation_first_table(result_data)
-
-    return result_data, compute
+# def whole_process(data_filter):
+#     result_data = computation_first_table(data_filter)
+#     compute = computation_first_table(result_data)
+#
+#     return result_data, compute
