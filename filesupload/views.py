@@ -74,10 +74,15 @@ def make_calcul(request):
 
         filter_datas = range_file(df)
 
-        first = pd.DataFrame(computation_first_table(filter_datas, solde_initial, account,  data_filter_arrete))
-        second = computation_second_table(first, options, account_type)
+        first = computation_first_table(filter_datas, solde_initial, account,  data_filter_arrete)
+        second = computation_second_table(pd.DataFrame(first), options, account_type)
 
-        dataframes.append({'first': first, 'second': second})
+        new_first = [dict(zip(first, t)) for t in zip(*first.values())]
+        new_second = [dict(zip(second, t)) for t in zip(*second.values())]
+
+        # print(new_first)
+
+        dataframes.append({'first': new_first, 'second': new_second})
 
     print(dataframes)
 
