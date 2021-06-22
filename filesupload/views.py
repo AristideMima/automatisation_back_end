@@ -78,13 +78,23 @@ def make_calcul(request):
         second = computation_second_table(pd.DataFrame(first), options, account_type)
 
         new_first = [dict(zip(first, t)) for t in zip(*first.values())]
-        new_second = [dict(zip(second, t)) for t in zip(*second.values())]
+
+        for k in list(second.keys()):
+            res = {}
+            for key in list(first.keys())[:-3]:
+                res[key] = " "
+
+            res['SOLDES_NBR'] = k
+            res["MVTS_13"] = second[k][1]
+            res["MVTS_14"] = second[k][0]
+            new_first.append(res)
+        # new_second = [dict(zip(second, t)) for t in zip(*second.values())]
 
         # print(new_first)
 
-        dataframes.append({'first': new_first, 'second': new_second})
+        dataframes.append({'first': new_first, 'account': account})
 
-    print(dataframes)
+    # print(dataframes)
 
     return Response({
         'data': dataframes
@@ -434,6 +444,14 @@ def computation_second_table(res_data, options, account_type):
     val = list(map(sum, zip(*inter)))[0]
 
     calcul['TOTAL'].append(val)
+    calcul['TOTAL'].append(" ")
+
+    calcul['INT_DEBITEURS_1'].append(taux_int_1)
+    calcul['INT_DEBITEURS_2'].append(taux_int_2)
+    calcul['COM_DE_MVTS'].append(taux_com_mvts)
+    calcul['COM_DE_DVERT'].append(taux_com_dec)
+    calcul['FRAIS_FIXES'].append("")
+    calcul['TVA'].append(tva)
 
     return calcul
 
