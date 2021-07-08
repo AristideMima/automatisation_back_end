@@ -15,6 +15,7 @@ from rest_framework.decorators import api_view
 from .models import Historique
 from io import StringIO
 from math import ceil
+from json import load
 
 # Create your views here.
 
@@ -34,6 +35,8 @@ global regex_dict
 regex_dict = {
     'excel': '[(*.xls)(xlsx]'
 }
+
+CODES_PATH = "static/libelle_codes.json"
 
 
 @api_view(['POST'])
@@ -62,7 +65,7 @@ def make_calcul(request):
 
     for account in accounts:
 
-        datas = list(Arretes.objects.filter(num_compte__in=accounts).values())
+        datas = list(Delta.objects.filter(num_compte__in=accounts).values())
 
         datas_acc = list(Compte.objects.filter(num_compte__in=accounts).values())
         account_type = datas_acc[0]['type_account']
@@ -105,16 +108,22 @@ def make_calcul(request):
 
 @api_view(['GET'])
 def get_infos(request):
-
     # Get all  infos base on history
     comptes = pd.DataFrame(list(Compte.objects.all().values()))
     delta = pd.DataFrame(list(Delta.objects.all().values()))
-    result = delta.merge(comptes, on="num_compte", how="inner")
-    result.date_deb_autorisation = result.date_deb_autorisation.dt.strftime('%d/%m/%Y')
-    result.date_fin_autorisation = result.date_fin_autorisation.dt.strftime('%d/%m/%Y')
-    result['period'] = result[['date_deb_autorisation', 'date_fin_autorisation']].agg(" - ".join, axis=1)
 
-    return Response(result.T.to_dict().values())
+    if len(comptes) != 0 :
+        result = comptes.copy()
+        if len(delta) != 0:
+            result = delta.merge(comptes, on="num_compte", how="right")
+
+            result.date_deb_autorisation = result.date_deb_autorisation.dt.strftime('%d/%m/%Y')
+            result.date_fin_autorisation = result.date_fin_autorisation.dt.strftime('%d/%m/%Y')
+            result['period'] = result[['date_deb_autorisation', 'date_fin_autorisation']].agg(" - ".join, axis=1)
+
+        return Response(result.T.to_dict().values())
+
+    return Response([{}])
 
 
 class FileUpload(views.APIView):
@@ -130,7 +139,6 @@ class FileUpload(views.APIView):
 
         if len(files) == 0:
             return Response(500)
-
 
         for file in files:
 
@@ -162,11 +170,39 @@ class FileUpload(views.APIView):
 def load_data_excel(data_excel):
     # Delete all rows on new uploading
     Historique.objects.all().delete()
-    # Compte.objects.all().delete()
+    Compte.objects.all().delete()
+    Operation.objects.all().delete()
 
     accounts = {}
-    operations = set()
+    operations = (data_excel['Code Opération'].astype(str)).unique().tolist()
 
+    all_accounts = data_excel['N° compte'].unique().tolist()
+
+    for account in all_accounts:
+
+        if account not in list(accounts.keys()):
+
+            accounts[account] = "Courant"
+
+            datas = data_excel[data_excel['N° compte'] == account]
+            # Get all intitule and operation code
+            intitule = datas['Intitulé compte'].mode()[0]
+            codes_operation = datas['Code Opération'].unique().tolist()
+
+            if "epargne" in unidecode(intitule.lower()) or "100" in codes_operation:
+                accounts[account] = "Epargne"
+
+            compte = Compte()
+            compte.num_compte = account
+            compte.intitule_compte = intitule
+            compte.type_account = accounts[account]
+
+            try:
+                compte.save()
+            except Exception as e:
+                print(e)
+
+    # Get account type of all accounts
     for i in range(len(data_excel)):
 
         data = data_excel.iloc[i]
@@ -183,18 +219,8 @@ def load_data_excel(data_excel):
         hist.sens = data['Sens']
         hist.montant = data['Montant']
 
-        operations.add(hist.code_operation)
-        if hist.num_compte not in list(accounts.keys()):
+        # operations.add(hist.code_operation)
 
-            # type_account = 'E'
-            #
-            # if 'courant' in unidecode(hist.intitule_compte.lower()) or hist.code_operation == 100:
-            #     type_account = 'C'
-            accounts[hist.num_compte] = []
-
-            accounts[hist.num_compte].append(hist.intitule_compte)
-
-            # accounts[hist.num_compte].append(type_account)
         try:
             hist.save()
 
@@ -203,28 +229,33 @@ def load_data_excel(data_excel):
 
     # Save operations
     if len(operations) != 0:
+
+        with open(CODES_PATH,  "r") as file:
+            codes = load(file)
+
         for op in operations:
             operation = Operation()
             operation.code_operation = op
+
+            # Try to get his corresponding code
+            try:
+                operation.libelle_operation = codes[op]
+            except Exception as e:
+                print(e)
 
             try:
                 operation.save()
             except Exception as e:
                 print(e)
 
-    # Save accounts
-    if len(list(accounts.keys())) != 0:
+        file.close()
 
-        for account in list(accounts.keys()):
-            compte = Compte()
-            compte.num_compte = account
-            compte.intitule_compte = accounts[account][0]
-            compte.save()
 
 # load datas txt file
 def load_data_txt(data_txt):
     # code_agence , account_number, amount, dates = None, None, None, None
-    code_agence, account_number, amount, frais_fixe, com_plus_dec, com_mvt, int_1, int_2, taxe_int_1, taxe_int_2, taxe_com_plus_dec, taxe_com_mvt, taux_tva, tva, net_deb, solde_val, dates = [None] * 17
+    code_agence, account_number, amount, frais_fixe, com_plus_dec, com_mvt, int_1, int_2, taxe_int_1, taxe_int_2, taxe_com_plus_dec, taxe_com_mvt, taux_tva, tva, net_deb, solde_val, dates = [
+                                                                                                                                                                                                  None] * 17
 
     auto_part = 30
     stri = data_txt.tail(auto_part).values.tolist()
@@ -234,17 +265,18 @@ def load_data_txt(data_txt):
     regex_dict = {
         'code': '\d{4} -',
         'account': 'XAF-\d{11}-\d{2}',
-        'dates' : '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)',
-        'amount' : '([0-9]+\.)+(\d{3}) XAF',
+        'dates': '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)',
+        'amount': '([0-9]+\.)+(\d{3}) XAF',
         'taxe_frais': 'TAXE/FRAIS{} ( )* TVA '.format(reg_numb),
         'taxe_com_mvt': 'TAXE/COMMISSION DE MOUVEMENT{}'.format(reg_numb),
         'com_mvt': 'COMMISSION DE MOUVEMENT({})+'.format(reg_numb),
         'com_dec': ' COMMISSION/PLUS FORT DECOUVERT({})+'.format(reg_numb),
-        'int_debit':  ' INTERETS DEBITEURS({})+'.format(reg_numb),
+        'int_debit': ' INTERETS DEBITEURS({})+'.format(reg_numb),
         'frais_fixe': 'FRAIS FIXES{}'.format(reg_numb),
         'net_deb': 'NET A DEBITER{}'.format(reg_numb),
         'solde_val': 'SOLDE EN VALEUR APRES AGIOS{}'.format(reg_numb),
-        'tva': '(TAXE/INTERETS DEBITEURS|TAXE/COMM. PLUS FORT DECOUVERT|TAXE/COMMISSION DE MOUVEMENT|TAXE/FRAIS)({})+( )*'.format(reg_numb)
+        'tva': '(TAXE/INTERETS DEBITEURS|TAXE/COMM. PLUS FORT DECOUVERT|TAXE/COMMISSION DE MOUVEMENT|TAXE/FRAIS)({})+( )*'.format(
+            reg_numb)
     }
 
     datas = string_datas
@@ -310,7 +342,7 @@ def load_data_txt(data_txt):
         taux_tva = get_interet(all_tva, pos_char=-3, sep=",")
 
         # taxes = [get_interet(all_tva, i) for i in range(4)]
-        tva = ceil((int_1 + int_2 + com_mvt + com_plus_dec + frais_fixe) * (taux_tva /100))
+        tva = ceil((int_1 + int_2 + com_mvt + com_plus_dec + frais_fixe) * (taux_tva / 100))
 
         net_deb = int(re.search(regex_dict['net_deb'], datas).group().split()[-1].replace(".", ""))
 

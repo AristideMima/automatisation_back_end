@@ -46,7 +46,7 @@ class Delta(models.Model):
     net_debit = models.IntegerField()
     solde_agios = models.IntegerField()
 
-    type_account = models.CharField(max_length=10, default="Courant")
+    # type_account = models.CharField(max_length=10, default="Courant")
 
     date_deb_arrete = models.DateTimeField()
     date_fin_arrete = models.DateTimeField()
@@ -58,30 +58,15 @@ class Delta(models.Model):
         unique_together = ('num_compte', 'date_deb_arrete', 'date_fin_arrete', 'date_deb_autorisation', 'date_fin_autorisation')
 
 
-class Arretes(models.Model):
-    """
-
-    """
-    code_agence = models.CharField(max_length=20)
-    num_compte = models.CharField(max_length=11)
-    montant = models.IntegerField()
-    date_deb_arrete = models.DateTimeField()
-    date_fin_arrete = models.DateTimeField()
-    date_deb_autorisation = models.DateTimeField()
-    date_fin_autorisation = models.DateTimeField()
-
-    class Meta:
-        unique_together = ('num_compte', 'date_deb_arrete', 'date_fin_arrete', 'date_deb_autorisation', 'date_fin_autorisation')
-
-
 class Compte(models.Model):
     """
 
     """
     num_compte = models.CharField(max_length=11, primary_key=True)
     intitule_compte = models.CharField(max_length=100)
-    # type_account = models.CharField(max_length=2, default='E')
+    type_account = models.CharField(max_length=7, default='Courant')
 
 
 class Operation(models.Model):
-    code_operation = models.CharField(max_length=5, unique=True)
+    code_operation = models.CharField(max_length=5, unique=True, primary_key=True)
+    libelle_operation = models.CharField(max_length=100, default="Pas de libellé")
