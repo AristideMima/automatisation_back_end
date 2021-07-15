@@ -41,85 +41,104 @@ CODES_PATH = "static/libelle_codes.json"
 
 @api_view(['POST'])
 def make_calcul(request):
-    accounts = request.data['accounts']
-    operations = request.data['operations']
-    options = request.data['options']
-    date_deb = options['date_deb']
-    date_fin = options['date_fin']
-    solde_initial = options['solde_initial']
+    # Get data passed by request
+    # We will compute all data separately
 
-    # Filtering part
-    data_filtering = Historique.objects.filter(num_compte__in=accounts, date_comptable__lte=date_fin,
-                                               date_comptable__gte=date_deb, date_valeur__lte=date_fin,
-                                               date_valeur__gte=date_deb
-                                               ).exclude(code_operation__in=operations).values()
+    response_computation = []
 
-    if len(data_filtering) == 0:
-        return Response(500)
+    try:
+        accounts = request.data['accounts']
 
-    # print(data_filtering)
+        dataframes = []
 
-    # Get filter datas by arretes
+        for account in accounts:
 
-    dataframes = []
+            data_filtering = Historique.objects.filter(num_compte=account['num_compte']).values()
 
-    for account in accounts:
+            if len(data_filtering) == 0:
+                return Response(500)
 
-        datas = list(Delta.objects.filter(num_compte__in=accounts).values())
+            df = pd.DataFrame(data_filtering)
 
-        datas_acc = list(Compte.objects.filter(num_compte__in=accounts).values())
-        account_type = datas_acc[0]['type_account']
+            # sort data by valeur date
+            filter_datas = range_file(df)
 
-        # datas_accounts = {x['num_compte']:  x['type_account'] for x in datas_acc}
+            first = computation_first_table(filter_datas, account)
 
-        data_filter_arrete = {x['num_compte']: [x['date_deb_autorisation'], x['date_fin_autorisation'], x['montant']]
-                              for x in datas}
+            second = computation_second_table(pd.DataFrame(first), account)
 
-        df = pd.DataFrame(data_filtering)
+            # Adding ecar
+            ecar = []
+            col_datas = ['interet_debiteur_1', 'interet_debiteur_2', 'commission_mvt', 'commission_dec', 'frais_fixe', 'tva']
 
-        filter_datas = range_file(df)
+            ecar.append(second['INT_DEBITEURS_1'][0] - account['interet_debiteur_1'])
+            second['INT_DEBITEURS_1'].extend([account['interet_debiteur_1'], ecar[-1]])
 
-        first = computation_first_table(filter_datas, solde_initial, account, data_filter_arrete)
-        second = computation_second_table(pd.DataFrame(first), options, account_type)
+            ecar.append(second['INT_DEBITEURS_2'][0] - account['interet_debiteur_2'])
+            second['INT_DEBITEURS_2'].extend([account['interet_debiteur_2'], ecar[-1]])
 
-        new_first = [dict(zip(first, t)) for t in zip(*first.values())]
+            ecar.append(second['COM_DE_MVTS'][0] - account['commission_mvt'])
+            second['COM_DE_MVTS'].extend([account['commission_mvt'], ecar[-1]])
 
-        for k in list(second.keys()):
-            res = {}
-            for key in list(first.keys())[:-3]:
-                res[key] = " "
+            ecar.append(second['COM_DE_DVERT'][0] - account['commission_dec'])
+            second['COM_DE_DVERT'].extend([account['commission_dec'], ecar[-1]])
 
-            res['SOLDES_NBR'] = k
-            res["MVTS_13"] = second[k][1]
-            res["MVTS_14"] = second[k][0]
-            new_first.append(res)
-        # new_second = [dict(zip(second, t)) for t in zip(*second.values())]
+            ecar.append(second['FRAIS_FIXES'][0] - account['frais_fixe'])
+            second['FRAIS_FIXES'].extend([account['frais_fixe'], ecar[-1]])
 
-        # print(new_first)
+            ecar.append(second['TVA'][0] - account['tva'])
+            second['TVA'].extend([account['tva'], ecar])
 
-        dataframes.append({'first': new_first, 'account': account})
+            second['TOTAL'].extend([sum([account[col] for col in col_datas]), sum(ecar)])
 
-    # print(dataframes)
+            print(second)
+            new_first = [dict(zip(first, t)) for t in zip(*first.values())]
+
+            for k in list(second.keys()):
+                res = {}
+                for key in list(first.keys())[:-5]:
+                    res[key] = " "
+
+                res['SOLDES_NBR'] = k
+                res["MVTS_13"] = second[k][1]
+                res["MVTS_14"] = second[k][0]
+                res["MVTS_14"] = second[k][2]
+                res["MVTS_14"] = second[k][3]
+                new_first.append(res)
+            # new_second = [dict(zip(second, t)) for t in zip(*second.values())]            #
+            dataframes.append({'first': new_first, 'account': account})
+            # print(dataframes)
+    except Exception as e:
+        print(e)
 
     return Response({
         'data': dataframes
     })
 
 
-@api_view(['GET'])
+@api_view(['POST'])
 def get_infos(request):
+    # Check con
+    data = request.data
+    direction = "left"
+
+    if data['conf'] != "conf":
+        direction = "right"
+
     # Get all  infos base on history
     comptes = pd.DataFrame(list(Compte.objects.all().values()))
     delta = pd.DataFrame(list(Delta.objects.all().values()))
 
-    if len(comptes) != 0 :
+    if len(comptes) != 0:
         result = comptes.copy()
         if len(delta) != 0:
             result = delta.merge(comptes, on="num_compte", how="right")
-
             result.date_deb_autorisation = result.date_deb_autorisation.dt.strftime('%d/%m/%Y')
             result.date_fin_autorisation = result.date_fin_autorisation.dt.strftime('%d/%m/%Y')
             result['period'] = result[['date_deb_autorisation', 'date_fin_autorisation']].agg(" - ".join, axis=1)
+
+        result['solde_initial'] = 0
+        result['key'] = result.index.tolist()
 
         return Response(result.T.to_dict().values())
 
@@ -230,7 +249,7 @@ def load_data_excel(data_excel):
     # Save operations
     if len(operations) != 0:
 
-        with open(CODES_PATH,  "r") as file:
+        with open(CODES_PATH, "r") as file:
             codes = load(file)
 
         for op in operations:
@@ -280,14 +299,6 @@ def load_data_txt(data_txt):
     }
 
     datas = string_datas
-
-    def get_value(colname, position, sep=" "):
-        """
-        :param: column name, position
-        :return: corresponded value
-        """
-        value = re.search(regex_dict[colname], datas).group(0).split(sep)[position]
-        return value
 
     # Helper functions definition
     def get_value(colname, position, sep=" "):
@@ -412,7 +423,8 @@ def range_file(data_excel):
 
 
 # Computation function
-def computation_first_table(datas, solde_initial, account, filter_compte):
+def computation_first_table(datas, account):
+
     # Initialization
     cols = ['CPTABLE', 'VALEUR', 'LIBELLES', 'DEBIT_MVTS', 'CREDIT_MVTS', 'SOLDES', 'SOLDE_JOUR', 'jrs', 'DEBITS_NBR',
             'CREDIT_NBR', 'SOLDES_NBR', 'MVTS_13', 'MVTS_14']
@@ -423,7 +435,7 @@ def computation_first_table(datas, solde_initial, account, filter_compte):
     # Computation part
 
     # First part
-    res_filter_date = datas[datas['num_compte'] == account]
+    res_filter_date = datas.copy()
 
     res_filter_date['index'] = res_filter_date.index
     res_filter_date = res_filter_date.sort_values(by=['date_valeur', 'index'])
@@ -431,7 +443,7 @@ def computation_first_table(datas, solde_initial, account, filter_compte):
     temp_datas = res_filter_date.copy()
     date_valeur = temp_datas['date_valeur'].tolist()
 
-    sold = solde_initial
+    sold = account['solde_initial']
     j = 1
 
     date_initiale = date_valeur[0].replace(day=1) - timedelta(days=1)
@@ -455,13 +467,15 @@ def computation_first_table(datas, solde_initial, account, filter_compte):
     soldes_nbr = res_data['SOLDES_NBR'][-1]
 
     # Check if account has a discover
-    if account in list(filter_compte.keys()):
-        if filter_compte[account][0] <= date_initiale <= filter_compte[account][1]:
-            mvt_13 = soldes_nbr * jrs if soldes_nbr <= filter_compte[account][2] else filter_compte[account][2] * jrs
-            mvt_14 = debit_nombre - mvt_13
+    date_debut_auto = pd.to_datetime(account['period'].split('-')[0])
+    date_fin_auto = pd.to_datetime(account['period'].split('-')[1])
 
-            res_data['MVTS_13'].append(mvt_13)
-            res_data['MVTS_14'].append(mvt_14)
+    if date_debut_auto <= date_initiale <= date_fin_auto:
+        mvt_13 = soldes_nbr * jrs if soldes_nbr <= account['montant'] else account['montant'] * jrs
+        mvt_14 = debit_nombre - mvt_13
+
+        res_data['MVTS_13'].append(mvt_13)
+        res_data['MVTS_14'].append(mvt_14)
     else:
         res_data['MVTS_13'].append(0)
         res_data['MVTS_14'].append(0)
@@ -515,14 +529,12 @@ def computation_first_table(datas, solde_initial, account, filter_compte):
         soldes_nbr = res_data['SOLDES_NBR'][-1]
 
         # Check if account has a discover
-        if account in list(filter_compte.keys()):
-            if filter_compte[account][0] <= date_initiale <= filter_compte[account][1]:
-                mvt_13 = soldes_nbr * jrs if soldes_nbr <= filter_compte[account][2] else filter_compte[account][
-                                                                                              2] * jrs
-                mvt_14 = debit_nombre - mvt_13
+        if date_debut_auto <= date_initiale <= date_fin_auto:
+            mvt_13 = soldes_nbr * jrs if soldes_nbr <= account['montant'] else account['montant']  * jrs
+            mvt_14 = debit_nombre - mvt_13
 
-                res_data['MVTS_13'].append(mvt_13)
-                res_data['MVTS_14'].append(mvt_14)
+            res_data['MVTS_13'].append(mvt_13)
+            res_data['MVTS_14'].append(mvt_14)
         else:
             res_data['MVTS_13'].append(0)
             res_data['MVTS_14'].append(0)
@@ -530,46 +542,46 @@ def computation_first_table(datas, solde_initial, account, filter_compte):
     return res_data
 
 
-def computation_second_table(res_data, options, account_type):
-    # taux_interets_debiteurs
-    taux_int_1 = options['taux_int_1'] / 100
-    taux_int_2 = options['taux_int_2'] / 100
-    taux_com_mvts = options['taux_com'] / 100
-    taux_com_dec = options['fort_dec'] / 100
-    tva = options['tva'] / 100
+def computation_second_table(res_data, account):
+
+    # Get taux_interets_debiteurs
+    taux_int_1 = account["taxe_interet_debiteur_1"] / 100
+    taux_int_2 = account["taxe_interet_debiteur_2"] / 100
+    taux_com_mvts = account["taux_commission_mvt"] / 100
+    taux_com_dec = account["taux_commission_dec"] / 100
+    tva = account["taux_tva"] / 100
 
     cols_calcul = ['INT_DEBITEURS_1', 'INT_DEBITEURS_2', 'COM_DE_MVTS', 'COM_DE_DVERT', 'FRAIS_FIXES', 'TVA', 'TOTAL']
     calcul = {col: [] for col in cols_calcul}
 
     # # 14
     res = (sum(res_data['MVTS_13']) * taux_int_1) / 360
-    calcul['INT_DEBITEURS_1'].append(res)
+    calcul['INT_DEBITEURS_1'].append(ceil(res))
 
     # 15
     res = (sum(res_data['MVTS_14']) * taux_int_2) / 360
-    calcul['INT_DEBITEURS_2'].append(res)
+    calcul['INT_DEBITEURS_2'].append(ceil(res))
 
     # 16
-    seuil = 2000 if account_type == 'E' else 5000
+    seuil = 2000 if account["type_account"] == 'Epargne' else 5000
 
     int_sum = sum(res_data['DEBIT_MVTS'][1:]) * taux_com_mvts
     # max_val = max(res_data['DEBIT_MVTS'])
     res = int_sum if int_sum < seuil else seuil
-    calcul['COM_DE_MVTS'].append(int_sum)
+    calcul['COM_DE_MVTS'].append(ceil(res))
 
     # 17
     total_plus_fort = min(res_data['SOLDE_JOUR'])
     res = 0 if total_plus_fort >= 0 else -total_plus_fort * taux_com_dec
-    calcul['COM_DE_DVERT'].append(res)
+    calcul['COM_DE_DVERT'].append(ceil(res))
 
     # 18
-    frais_fixe = 5000
-    calcul['FRAIS_FIXES'].append(frais_fixe)
+    calcul['FRAIS_FIXES'].append(seuil)
 
     inter = [calcul[l] for l in list(calcul.keys())[:-2]]
     val = list(map(sum, zip(*inter)))[0] * tva
 
-    calcul['TVA'].append(val)
+    calcul['TVA'].append(ceil(val))
 
     inter = [calcul[l] for l in list(calcul.keys())[:-1]]
     val = list(map(sum, zip(*inter)))[0]
