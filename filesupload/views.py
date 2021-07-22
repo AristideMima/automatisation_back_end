@@ -173,6 +173,7 @@ def get_infos(request):
             ircm = [TAUX_IRCM_EPARGNE, INITIAL_VALUE]
             tva = [TAUX_TVA, INITIAL_VALUE]
             frais_fixe = 2000
+            autorisations = {}
 
             try:
                 account_echelle = next(item for item in delta if item['num_compte'] == info_account['account'])
@@ -231,6 +232,7 @@ def get_infos(request):
                     frais_fixe = account_echelle['frais_fixe']
 
             # Final step: Update the dictionnary
+            info_account.update(autorisations)
             info_account.update(
                 {'interet_inf': interet_inf[1], 'taux_interet_inf': interet_inf[0], 'interet_sup': interet_sup[1],
                  'taux_interet_sup': interet_sup[0], 'fraix_fixe': frais_fixe, 'tva': tva[1], 'taux_tva': tva[0],
@@ -242,6 +244,7 @@ def get_infos(request):
 
         for info_account in accounts:
             interets = [{'taux': 0, 'val': 0} for i in range(LEN_INTERET_DEBITEURS)]
+            autorisations = {}
             com_mvt = {'taux': TAUX_COM_MVT, 'val': INITIAL_VALUE}
             com_dec = {'taux': TAUX_DEC, 'val': INITIAL_VALUE}
             tva = {'taux': TAUX_TVA, 'val': INITIAL_VALUE}
@@ -280,42 +283,23 @@ def get_infos(request):
                 if account_echelle['frais_fixe'] is not None:
                     frais_fixe = account_echelle['frais_fixe']
 
+                if account_echelle['autorisations'] is not None:
+                    autorisations.update(account_echelle['autorisations'])
+
+
             # Update dict
             info_account.update({"interet_"+ str(i) : a['val'] for i,a in enumerate(interets)})
             info_account.update({"taux_interet_" + str(i): a['taux'] for i,a in enumerate(interets)})
+            info_account.update(autorisations)
             info_account.update(
                 {'fraix_fixe': frais_fixe, 'tva': tva['val'], 'taux_tva': tva['taux'], 'com_mvt' : com_mvt['val'], 'taux_com_mvt' : com_mvt['taux'],
                  'com_dec' : com_dec['val'], 'taux_com_dec' : com_dec['taux']})
+            new_infos_account.append(info_account)
 
+    else:
+        return Response(500)
 
-
-
-
-
-
-
-
-
-
-
-        # Loop and make the real stuff happen
-
-
-
-    # if len(comptes) != 0:
-    #     result = comptes.copy()
-    #     if len(delta) != 0:
-    #         result = delta.merge(comptes, on="num_compte", how="right")
-    #         result.date_deb_autorisation = result.date_deb_autorisation.dt.strftime('%d/%m/%Y')
-    #         result.date_fin_autorisation = result.date_fin_autorisation.dt.strftime('%d/%m/%Y')
-    #         # result['period'] = result[['date_deb_autorisation', 'date_fin_autorisation']].agg(" - ".join, axis=1)
-    #
-    #     result['solde_initial'] = 0
-    #     result['key'] = result.index.tolist()
-    #
-    #     return Response(result.T.to_dict().values())
-
-    return Response([{}])
+    return Response(new_infos_account)
 
 
 class FileUpload(views.APIView):
@@ -512,13 +496,12 @@ def load_data_txt(datas_txt, current_user):
     autorisations = {}
     if len(new_dates) > 2:
         try:
-            montants = [int(match.group().replace("XAF", "").replace(".", "")) for match in
-                        re.finditer(regex_dict['amount'], datas)]
+            montants = [int(match.group().replace("XAF", "").replace(".", "")) for match in re.finditer(regex_dict['amount'], datas)]
+            autorisations = {}
             j = 0
             for i in range(0, len(new_dates[2:]), 2):
-                print(i)
-                autorisations[j] = []
-                autorisations[j].extend([montants[j], new_dates[i + 2], new_dates[i + 3]])
+                autorisations.update({ 'montant_' + str(j+1): montants[j], 'debut_autorisation_' + str(j+1): new_dates[i+2],
+                                       'fin_autorisation_' + str(j+1): new_dates[i+3]})
                 j += 1
         except Exception as e:
             print(e)
