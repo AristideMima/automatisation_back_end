@@ -12,23 +12,29 @@ from django.utils.timezone import utc, now
 import re
 from unidecode import unidecode
 from rest_framework.decorators import api_view
-from .models import Historique
 from io import StringIO
 from math import ceil
 from json import load
+from rest_framework.permissions import IsAuthenticated
 
-# Create your views here.
+# Constant declarations
+TAUX_INT_EPARGNE = 2.45
+TAUX_IRCM_EPARGNE = 16.25
+TAUX_TVA = 19.25
+INITIAL_VALUE = 0
+SEUIL_INT_INF = 10000000
 
-# class FileParser(BaseParser):
-#     """
-#         Class based custom parser
-#     """
-#
-#     media_type = 'text/plain'
-#
-#     def parse(self, stream, media_type=None, parser_context=None):
-#
-#         return stream.read()
+
+class FileParser(BaseParser):
+    """
+        Class based custom parser
+    """
+
+    media_type = 'text/plain'
+
+    def parse(self, stream, media_type=None, parser_context=None):
+        return stream.read()
+
 
 global regex_dict
 
@@ -46,6 +52,10 @@ def make_calcul(request):
 
     response_computation = []
 
+    # First get the last current historic
+
+    current_user = request.user
+
     try:
         accounts = request.data['accounts']
 
@@ -53,7 +63,7 @@ def make_calcul(request):
 
         for account in accounts:
 
-            data_filtering = Historique.objects.filter(num_compte=account['num_compte']).values()
+            data_filtering = Historic.objects.filter(num_compte=account['num_compte']).values()
 
             if len(data_filtering) == 0:
                 return Response(500)
@@ -69,7 +79,8 @@ def make_calcul(request):
 
             # Adding ecar
             ecar = []
-            col_datas = ['interet_debiteur_1', 'interet_debiteur_2', 'commission_mvt', 'commission_dec', 'frais_fixe', 'tva']
+            col_datas = ['interet_debiteur_1', 'interet_debiteur_2', 'commission_mvt', 'commission_dec', 'frais_fixe',
+                         'tva']
 
             ecar.append(second['INT_DEBITEURS_1'][0] - account['interet_debiteur_1'])
             second['INT_DEBITEURS_1'].extend([account['interet_debiteur_1'], ecar[-1]])
@@ -110,7 +121,6 @@ def make_calcul(request):
             # print(dataframes)
     except Exception as e:
         print(e)
-
     return Response({
         'data': dataframes
     })
@@ -120,27 +130,126 @@ def make_calcul(request):
 def get_infos(request):
     # Check con
     data = request.data
-    direction = "left"
 
-    if data['conf'] != "conf":
-        direction = "right"
+    # Define direction and account type
+    direction = data['conf']
+    type_account = data['type_account']
+
+    # Steps: 1- select by config,
+    # select:
 
     # Get all  infos base on history
-    comptes = pd.DataFrame(list(Compte.objects.all().values()))
-    delta = pd.DataFrame(list(Delta.objects.all().values()))
 
-    if len(comptes) != 0:
-        result = comptes.copy()
-        if len(delta) != 0:
-            result = delta.merge(comptes, on="num_compte", how="right")
-            result.date_deb_autorisation = result.date_deb_autorisation.dt.strftime('%d/%m/%Y')
-            result.date_fin_autorisation = result.date_fin_autorisation.dt.strftime('%d/%m/%Y')
-            result['period'] = result[['date_deb_autorisation', 'date_fin_autorisation']].agg(" - ".join, axis=1)
+    # Get latest history
+    save_history = Historic.objects.filter(user=request.user).latest('created_at').historic
 
-        result['solde_initial'] = 0
-        result['key'] = result.index.tolist()
+    if save_history:
+        historic = pd.DataFrame(save_history['historic'])
+        accounts = pd.DataFrame(save_history['accounts'])
+        accounts = accounts[accounts.type_compte == type_account]
+        accounts = list(pd.DataFrame(accounts).T.to_dict().values())
+        operations = pd.DataFrame(save_history['operations'])
+    else:
+        return Response(500)
 
-        return Response(result.T.to_dict().values())
+    delta = list(Echelle.objects.filter(user=request.user).T.to_dict().values())
+
+    # loop through all unique accounts
+    new_infos_account = []
+    if type_account == "Epargne":
+
+        for info_account in accounts:
+            # Initialization
+            interet_inf = [TAUX_INT_EPARGNE, INITIAL_VALUE]
+            interet_sup = [TAUX_INT_EPARGNE, INITIAL_VALUE]
+            ircm = [TAUX_IRCM_EPARGNE, INITIAL_VALUE]
+            tva = [TAUX_TVA, INITIAL_VALUE]
+            frais_fixe = 2000
+
+            try:
+                account_echelle = next(item for item in delta if item['num_compte'] == info_account['account'])
+            except Exception as e:
+                account_echelle = None
+
+            if account_echelle is not None:
+
+                # 1- Interets
+
+                echelle_deb, echelle_cred = account_echelle.interets_debiteurs, account_echelle.interets_crediteurs
+
+                # Intermediate fonction for interest
+                def get_interets_epargne(interets):
+
+                    taux_init = 0
+                    int_inf = 0
+                    int_sup = 0
+
+                    for ind, item in enumerate(interets):
+                        if ind == 0:
+                            taux_init = item[1]
+
+                        val_interet = item[0]
+
+                        if val_interet <= SEUIL_INT_INF:
+                            int_inf += val_interet
+                        else:
+                            int_sup += val_interet
+
+                    return taux_init, int_inf, int_sup
+
+                if echelle_deb is not None:
+                    res_deb = get_interets_epargne(echelle_deb)
+                    interet_inf[0] = res_deb[0]
+                    interet_inf[1] += res_deb[1]
+                    interet_sup[1] += res_deb[2]
+
+                if echelle_cred is not None:
+                    res_cred = get_interets_epargne(echelle_cred)
+                    interet_sup[0] = res_cred[0]
+                    interet_sup[1] += res_cred[1]
+                    interet_inf[1] += res_cred[2]
+
+                # 2- Tva
+
+                if account_echelle['tva'] is not None:
+                    tva[0] = account_echelle['tva']['taux']
+                    tva[1] = account_echelle['tva']['val']
+
+                # 3- Ircm
+                ircm[1] = ceil(interet_sup[1] * TAUX_IRCM_EPARGNE / 100)
+
+                # 4- frais fixe
+                if account_echelle['frais_fixe'] is not None:
+                    frais_fixe = account_echelle['frais_fixe']
+
+            # Final step: Update the dictionnary
+            info_account.update(
+                    {'interet_inf': interet_inf[1], 'taux_interet_inf': interet_inf[0], 'interet_sup': interet_sup[1],
+                     'taux_interet_sup': interet_sup[0], 'fraix_fixe': frais_fixe, 'tva': tva[1], 'taux_tva': tva[0],
+                     'ircm': ircm[1], 'taux_ircm': ircm[0]})
+
+            new_infos_account.append(info_account)
+
+    elif type_account == "Courant":
+
+        pass
+
+
+
+
+
+    # if len(comptes) != 0:
+    #     result = comptes.copy()
+    #     if len(delta) != 0:
+    #         result = delta.merge(comptes, on="num_compte", how="right")
+    #         result.date_deb_autorisation = result.date_deb_autorisation.dt.strftime('%d/%m/%Y')
+    #         result.date_fin_autorisation = result.date_fin_autorisation.dt.strftime('%d/%m/%Y')
+    #         # result['period'] = result[['date_deb_autorisation', 'date_fin_autorisation']].agg(" - ".join, axis=1)
+    #
+    #     result['solde_initial'] = 0
+    #     result['key'] = result.index.tolist()
+    #
+    #     return Response(result.T.to_dict().values())
 
     return Response([{}])
 
@@ -150,6 +259,7 @@ class FileUpload(views.APIView):
         Class based file upload
     """
     parser_classes = [MultiPartParser]
+    permission_classes = [IsAuthenticated]
 
     # file upload function
     def put(self, request, format=None):
@@ -161,7 +271,7 @@ class FileUpload(views.APIView):
 
         for file in files:
 
-            print(pathlib.Path(str(file)).suffix)
+            current_user = request.user
 
             if file:
                 if pathlib.Path(str(file)).suffix in [".xls", ".xlsx"]:
@@ -170,137 +280,97 @@ class FileUpload(views.APIView):
 
                     cols_str = ['Code Agence', 'Référence lettrage', 'chapitre', 'N° compte', 'Code Opération']
                     cols_dates = ['Date Comptable', 'Date de Valeur']
-                    data_excel = pd.read_excel(file, skiprows=2, dtype={val: str for val in cols_str},
-                                               parse_dates=cols_dates, dayfirst=True)
+                    all_cols = cols_str + cols_dates
+                    try:
+                        data_excel = pd.read_excel(file, skiprows=2, dtype={val: str for val in cols_str},
+                                                   parse_dates=cols_dates, dayfirst=True)
+                    except Exception as e:
+                        return Response(500)
 
+                    data_excel = data_excel[all_cols]
+
+                    if data_excel.isnull().sum().sum() != 0:
+                        return Response(500)
                     # data_excel.drop(columns=['Unnamed: 0'], inplace=True)
 
-                    load_data_excel(data_excel.copy())
+                    load_data_excel(data_excel.copy(), current_user)
 
                 else:
                     pass
                     data_excel = pd.read_csv(file, sep='\n', header=None, squeeze=True)
-                    load_data_txt(data_excel.copy())
+                    load_data_txt(data_excel.copy(), current_user)
 
         return Response(204)
 
 
 # Load datas excel file
-def load_data_excel(data_excel):
+def load_data_excel(data_excel, current_user):
     # Delete all rows on new uploading
-    Historique.objects.all().delete()
-    Compte.objects.all().delete()
-    Operation.objects.all().delete()
 
-    accounts = {}
+    accounts = []
+
     operations = (data_excel['Code Opération'].astype(str)).unique().tolist()
 
     all_accounts = data_excel['N° compte'].unique().tolist()
-
+    # Process accounts
     for account in all_accounts:
 
-        if account not in list(accounts.keys()):
+        type_account = "Courant"
 
-            accounts[account] = "Courant"
+        datas = data_excel[data_excel['N° compte'] == account]
+        # Get all intitule and operation code
+        intitule = datas['Intitulé compte'].mode()[0]
+        codes_operation = datas['Code Opération'].unique().tolist()
 
-            datas = data_excel[data_excel['N° compte'] == account]
-            # Get all intitule and operation code
-            intitule = datas['Intitulé compte'].mode()[0]
-            codes_operation = datas['Code Opération'].unique().tolist()
+        if "epargne" in unidecode(intitule.lower()) or "100" in codes_operation:
+            type_account = "Epargne"
 
-            if "epargne" in unidecode(intitule.lower()) or "100" in codes_operation:
-                accounts[account] = "Epargne"
-
-            compte = Compte()
-            compte.num_compte = account
-            compte.intitule_compte = intitule
-            compte.type_account = accounts[account]
-
-            try:
-                compte.save()
-            except Exception as e:
-                print(e)
-
-    # Get account type of all accounts
-    for i in range(len(data_excel)):
-
-        data = data_excel.iloc[i]
-
-        hist = Historique()
-
-        hist.code_agence = data['Code Agence']
-        hist.date_comptable = data['Date Comptable']
-        hist.date_valeur = data['Date de Valeur']
-        hist.num_compte = data['N° compte']
-        hist.intitule_compte = data['Intitulé compte']
-        hist.libelle_operation = data['Libellé Opération']
-        hist.code_operation = data['Code Opération']
-        hist.sens = data['Sens']
-        hist.montant = data['Montant']
-
-        # operations.add(hist.code_operation)
-
-        try:
-            hist.save()
-
-        except Exception as e:
-            print(e)
+        accounts.append({"num_compte": account, "intitule": intitule, "type_compte": type_account})
 
     # Save operations
     if len(operations) != 0:
 
+        operations = []
+        libelle_operation = "No libelle"
         with open(CODES_PATH, "r") as file:
             codes = load(file)
-
         for op in operations:
-            operation = Operation()
-            operation.code_operation = op
 
             # Try to get his corresponding code
             try:
-                operation.libelle_operation = codes[op]
+                libelle_operation = codes[op]
             except Exception as e:
                 print(e)
-
-            try:
-                operation.save()
-            except Exception as e:
-                print(e)
+            operations.append({"code_operation": op, "libelle_operation": libelle_operation})
 
         file.close()
 
+    # save historic
+    new_hist = Historic()
+
+    historic_part = data_excel.to_dict().values()
+    formatted_historic = {"historic": historic_part, "accounts": accounts, "operations": operations}
+
+    new_hist.historic = formatted_historic
+    new_hist.user = current_user
+
+    try:
+        new_hist.save()
+    except Exception as e:
+        print(e)
+
 
 # load datas txt file
-def load_data_txt(data_txt):
+def load_data_txt(datas_txt, current_user):
     # code_agence , account_number, amount, dates = None, None, None, None
-    code_agence, account_number, amount, frais_fixe, com_plus_dec, com_mvt, int_1, int_2, taxe_int_1, taxe_int_2, taxe_com_plus_dec, taxe_com_mvt, taux_tva, tva, net_deb, solde_val, dates = [
-                                                                                                                                                                                                  None] * 17
 
-    auto_part = 30
-    stri = data_txt.tail(auto_part).values.tolist()
+    auto_part = 40
+    stri = datas_txt.tail(auto_part).values.tolist()
     string_datas = " ".join(stri)
 
-    reg_numb = "( )*(-)?([0-9\.,]+)(\d)+( )*[(TVA)(%)]*"
-    regex_dict = {
-        'code': '\d{4} -',
-        'account': 'XAF-\d{11}-\d{2}',
-        'dates': '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)',
-        'amount': '([0-9]+\.)+(\d{3}) XAF',
-        'taxe_frais': 'TAXE/FRAIS{} ( )* TVA '.format(reg_numb),
-        'taxe_com_mvt': 'TAXE/COMMISSION DE MOUVEMENT{}'.format(reg_numb),
-        'com_mvt': 'COMMISSION DE MOUVEMENT({})+'.format(reg_numb),
-        'com_dec': ' COMMISSION/PLUS FORT DECOUVERT({})+'.format(reg_numb),
-        'int_debit': ' INTERETS DEBITEURS({})+'.format(reg_numb),
-        'frais_fixe': 'FRAIS FIXES{}'.format(reg_numb),
-        'net_deb': 'NET A DEBITER{}'.format(reg_numb),
-        'solde_val': 'SOLDE EN VALEUR APRES AGIOS{}'.format(reg_numb),
-        'tva': '(TAXE/INTERETS DEBITEURS|TAXE/COMM. PLUS FORT DECOUVERT|TAXE/COMMISSION DE MOUVEMENT|TAXE/FRAIS)({})+( )*'.format(
-            reg_numb)
-    }
-
+    global datas
     datas = string_datas
 
-    # Helper functions definition
     def get_value(colname, position, sep=" "):
         """
         :param: column name, position
@@ -309,9 +379,12 @@ def load_data_txt(data_txt):
         value = re.search(regex_dict[colname], datas).group().split(sep)[position]
         return value
 
-    def get_interet(string_list, pos_string=0, pos_char=-1, sep="."):
+    def get_interet(string, pos_char=-1, sep="."):
 
-        initial = string_list[pos_string].split()[pos_char]
+        if isinstance(string, list):
+            string = string[0]
+
+        initial = string.split()[pos_char]
 
         value = None
 
@@ -322,91 +395,164 @@ def load_data_txt(data_txt):
 
         return value
 
+    reg_numb = "( )*(-)?([0-9\.,]+)(\d)+( )*[(TVA)(%)]*"
+    date_reg = '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)'
+    regex_dict = {
+        'code': '\d{4} -',
+        'account': 'XAF-\d{11}-\d{2}',
+        'dates': '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)',
+        'amount': '([0-9]+\.)+(\d{3}) XAF',
+        'taxe_frais': 'TAXE/FRAIS{} ( )* TVA '.format(reg_numb),
+        'taxe_com_mvt': 'TAXE/COMMISSION DE MOUVEMENT{}'.format(reg_numb),
+        'com_mvt': 'COMMISSION DE MOUVEMENT({})+'.format(reg_numb),
+        'com_dec': 'COMMISSION/PLUS FORT DECOUVERT({})+'.format(reg_numb),
+        'int_debit': ' INTERETS DEBITEURS({})+'.format(reg_numb),
+        'int_credit': ' INTERETS CREDITEURS({})+'.format(reg_numb),
+        'frais_fixe': 'FRAIS FIXES{}'.format(reg_numb),
+        'net_deb': 'NET A DEBITER{}'.format(reg_numb),
+        'solde_val': 'SOLDE EN VALEUR APRES AGIOS{}'.format(reg_numb),
+        'tva': '(TAXE/INTERETS DEBITEURS|TAXE/COMM. PLUS FORT DECOUVERT|TAXE/COMMISSION DE MOUVEMENT|TAXE/FRAIS)({})+( )*'.format(
+            reg_numb),
+        'ircm': 'PRELEVEMENT LIBERATOIRE a compter du ( )* {}( )*({})+'.format(date_reg, reg_numb)
+    }
+
+    # Try to fill all values
+
+    code_agence, account_number, date_deb_arrete, date_fin_arrete, frais_fixe = [None] * 5
+
+    new_ech = Echelle()
+
     try:
+        new_dates = []
         code_agence = get_value('code', 0)
         account_number = get_value('account', 1, "-")
-        amount = int(get_value('amount', 0).replace(".", ""))
-
-        frais_fixe = int(re.search(regex_dict['frais_fixe'], datas).group().split()[-1].replace(".", ""))
         dates = re.findall(regex_dict['dates'], datas)
+        dates = dates[:-1] if len(dates) % 2 != 0 else dates
 
-        interets = [match.group() for match in re.finditer(regex_dict['int_debit'], datas)]
-        int_1 = get_interet(interets)
-        taxe_int_1 = get_interet(interets, pos_char=-2, sep=",")
-
-        if len(interets) == 2:
-            int_2 = get_interet(interets, 1)
-            taxe_int_2 = get_interet(interets, pos_string=1, pos_char=-2, sep=",")
-        else:
-            int_2 = 0
-            taxe_int_2 = 0
-
-        res_plus_dec = [re.search(regex_dict['com_dec'], datas).group()]
-        taxe_com_plus_dec = get_interet(res_plus_dec, pos_char=-2, sep=",")
-        com_plus_dec = get_interet(res_plus_dec)
-
-        res_mvt = [re.search(regex_dict['com_mvt'], datas).group()]
-        taxe_com_mvt = get_interet(res_mvt, pos_char=-2, sep=",")
-        com_mvt = get_interet(res_mvt)
-
-        all_tva = [match.group() for match in re.finditer(regex_dict['tva'], datas)]
-        taux_tva = get_interet(all_tva, pos_char=-3, sep=",")
-
-        # taxes = [get_interet(all_tva, i) for i in range(4)]
-        tva = ceil((int_1 + int_2 + com_mvt + com_plus_dec + frais_fixe) * (taux_tva / 100))
-
-        net_deb = int(re.search(regex_dict['net_deb'], datas).group().split()[-1].replace(".", ""))
-
-        solde_val = int(re.search(regex_dict['solde_val'], datas).group().split()[-1].replace(".", ""))
-
-    except Exception as e:
-        print(e)
-    l = [code_agence, account_number, amount, frais_fixe, int_1, int_2, taxe_int_1, taxe_int_2,
-         taxe_com_plus_dec, taxe_com_mvt, taux_tva, tva, net_deb, solde_val, dates]
-    if None in l:
-        print(l)
-        return Response(500)
-    else:
-        arrete = Delta()
-        # dates conversion
-        new_dates = []
+        # get all dates
         for single_date in dates:
             res = [int(num) for num in single_date[::-1]]
             new_date = datetime(res[0], res[1], res[2])
             new_dates.append(new_date)
 
-        arrete.code_agence = code_agence
-        arrete.num_compte = account_number
-        arrete.montant = amount
-        arrete.interet_debiteur_1 = int_1
-        arrete.interet_debiteur_2 = int_2
-        arrete.taxe_interet_debiteur_1 = taxe_int_1
-        arrete.taxe_interet_debiteur_2 = taxe_int_2
+        date_deb_arrete = new_dates[0]
+        date_fin_arrete = new_dates[1]
 
-        arrete.commission_mvt = com_mvt
-        arrete.commission_dec = com_plus_dec
+        frais_fixe = int(re.search(regex_dict['frais_fixe'], datas).group().split()[-1].replace(".", ""))
 
-        arrete.taux_commission_mvt = taxe_com_mvt
-        arrete.taux_commission_dec = taxe_com_plus_dec
+    except Exception as e:
+        print(e)
 
-        arrete.frais_fixe = frais_fixe
-        arrete.type_account = "Courant" if frais_fixe == 5000 else "Epargne"
+    # Autorisations
 
-        arrete.tva = tva
-        arrete.taux_tva = taux_tva
-
-        arrete.net_debit = net_deb
-        arrete.solde_agios = solde_val
-
-        arrete.date_deb_arrete = new_dates[0]
-        arrete.date_fin_arrete = new_dates[1]
-        arrete.date_deb_autorisation = new_dates[2]
-        arrete.date_fin_autorisation = new_dates[3]
-
+    autorisations = {}
+    if len(new_dates) > 2:
         try:
-            arrete.save()
+            montants = [int(match.group().replace("XAF", "").replace(".", "")) for match in
+                        re.finditer(regex_dict['amount'], datas)]
+            j = 0
+            for i in range(0, len(new_dates[2:]), 2):
+                print(i)
+                autorisations[j] = []
+                autorisations[j].extend([montants[j], new_dates[i + 2], new_dates[i + 3]])
+                j += 1
         except Exception as e:
             print(e)
+
+    # Interets DEBITEURS
+    try:
+        interets_debiteurs = {}
+        all_int_debiteurs = [match.group() for match in re.finditer(regex_dict['int_credit'], datas)]
+
+        for i, interet in enumerate(all_int_debiteurs):
+            interets_debiteurs[i] = []
+            val_int = get_interet(interet)
+            taxe_int = get_interet(interet, pos_char=-2, sep=",")
+            interets_debiteurs[i].extend([val_int, taxe_int])
+
+    except Exception as e:
+        print(e)
+
+    # Interets CREDITEURS
+    try:
+        interets_crediteurs = {}
+        all_int_crediteurs = [match.group() for match in re.finditer(regex_dict['int_debit'], datas)]
+
+        for i, interet in enumerate(all_int_crediteurs):
+            interets_crediteurs[i] = []
+            val_int = get_interet(interet)
+            taxe_int = get_interet(interet, pos_char=-2, sep=",")
+            interets_crediteurs[i].extend([val_int, taxe_int])
+    except Exception as e:
+        print(e)
+
+    # IRCM
+    try:
+        ircm = {}
+        all_ircm = re.search(regex_dict['ircm'],
+                             string_datas.translate(str.maketrans({val: ' ' for val in ['\n', '!', '-']}))).group(
+            0).strip().split()
+        ircm['val'] = int(all_ircm[-1])
+        ircm['taux'] = float(all_ircm[-2])
+    except Exception as e:
+        print(e)
+
+    # Commission mouvement
+    try:
+        commission_mouvement = {}
+        res_mvt = [re.search(regex_dict['com_mvt'], datas).group()]
+        taxe_com_mvt = get_interet(res_mvt, pos_char=-2, sep=",")
+        com_mvt = get_interet(res_mvt)
+
+        commission_mouvement['val'] = com_mvt
+        commission_mouvement['taux'] = taxe_com_mvt
+    except Exception as e:
+        print(e)
+
+    # Commission découvert
+    try:
+        commission_decouvert = {}
+        res_dec = [re.search(regex_dict['com_dec'], datas).group()]
+        taxe_com_dec = get_interet(res_dec, pos_char=-2, sep=",")
+        com_dec = get_interet(res_dec)
+
+        commission_decouvert['val'] = com_dec
+        commission_decouvert['taux'] = taxe_com_dec
+    except Exception as e:
+        print(e)
+
+    # TVA
+    try:
+        tva = {}
+        all_tva = [match.group() for match in re.finditer(regex_dict['tva'], datas)]
+        taux_tva = get_interet(all_tva, pos_char=-3, sep=",")
+
+        taxes_tva = [get_interet(string_tva) for string_tva in all_tva]
+        val_tva = ceil(sum(taxes_tva) * (taux_tva / 100))
+
+        tva['val'] = val_tva
+        tva['taux'] = taux_tva
+
+    except Exception as e:
+        print(e)
+    if None not in [code_agence, account_number, date_deb_arrete, date_fin_arrete]:
+        new_ech.user = current_user
+        new_ech.code_agence = code_agence
+        new_ech.num_compte = account_number
+        new_ech.date_deb_arrete = date_deb_arrete
+        new_ech.date_fin_arrete = date_fin_arrete
+        new_ech.frais_fixe = frais_fixe
+        new_ech.autorisations = autorisations
+        new_ech.interets_debiteurs = interets_debiteurs
+        new_ech.interets_crediteurs = interets_crediteurs
+        new_ech.ircm = ircm
+        new_ech.comission_mouvement = commission_mouvement
+        new_ech.commission_decouvert = commission_decouvert
+        new_ech.tva = tva
+        try:
+            new_ech.save()
+        except Exception as e:
+            return Response(500)
 
 
 # Processing functions
@@ -424,7 +570,6 @@ def range_file(data_excel):
 
 # Computation function
 def computation_first_table(datas, account):
-
     # Initialization
     cols = ['CPTABLE', 'VALEUR', 'LIBELLES', 'DEBIT_MVTS', 'CREDIT_MVTS', 'SOLDES', 'SOLDE_JOUR', 'jrs', 'DEBITS_NBR',
             'CREDIT_NBR', 'SOLDES_NBR', 'MVTS_13', 'MVTS_14']
@@ -530,7 +675,7 @@ def computation_first_table(datas, account):
 
         # Check if account has a discover
         if date_debut_auto <= date_initiale <= date_fin_auto:
-            mvt_13 = soldes_nbr * jrs if soldes_nbr <= account['montant'] else account['montant']  * jrs
+            mvt_13 = soldes_nbr * jrs if soldes_nbr <= account['montant'] else account['montant'] * jrs
             mvt_14 = debit_nombre - mvt_13
 
             res_data['MVTS_13'].append(mvt_13)
@@ -543,7 +688,6 @@ def computation_first_table(datas, account):
 
 
 def computation_second_table(res_data, account):
-
     # Get taux_interets_debiteurs
     taux_int_1 = account["taxe_interet_debiteur_1"] / 100
     taux_int_2 = account["taxe_interet_debiteur_2"] / 100
@@ -598,8 +742,9 @@ def computation_second_table(res_data, account):
 
     return calcul
 
-# def whole_process(data_filter):
-#     result_data = computation_first_table(data_filter)
-#     compute = computation_first_table(result_data)
-#
-#     return result_data, compute
+
+def whole_process(data_filter):
+    result_data = computation_first_table(data_filter)
+    compute = computation_first_table(result_data)
+
+    return result_data, compute
