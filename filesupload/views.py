@@ -18,11 +18,19 @@ from json import load
 from rest_framework.permissions import IsAuthenticated
 
 # Constant declarations
+
+# 1- Epargne
 TAUX_INT_EPARGNE = 2.45
 TAUX_IRCM_EPARGNE = 16.25
 TAUX_TVA = 19.25
 INITIAL_VALUE = 0
 SEUIL_INT_INF = 10000000
+
+# 2- Courant
+TAUX_COM_MVT = 0.025
+TAUX_DEC = 0.020833
+TAUX_INT_DEB = 15.5
+LEN_INTERET_DEBITEURS  = 3
 
 
 class FileParser(BaseParser):
@@ -175,7 +183,7 @@ def get_infos(request):
 
                 # 1- Interets
 
-                echelle_deb, echelle_cred = account_echelle.interets_debiteurs, account_echelle.interets_crediteurs
+                echelle_deb, echelle_cred = account_echelle['interets_debiteurs'], account_echelle['interets_crediteurs']
 
                 # Intermediate fonction for interest
                 def get_interets_epargne(interets):
@@ -224,17 +232,73 @@ def get_infos(request):
 
             # Final step: Update the dictionnary
             info_account.update(
-                    {'interet_inf': interet_inf[1], 'taux_interet_inf': interet_inf[0], 'interet_sup': interet_sup[1],
-                     'taux_interet_sup': interet_sup[0], 'fraix_fixe': frais_fixe, 'tva': tva[1], 'taux_tva': tva[0],
-                     'ircm': ircm[1], 'taux_ircm': ircm[0]})
+                {'interet_inf': interet_inf[1], 'taux_interet_inf': interet_inf[0], 'interet_sup': interet_sup[1],
+                 'taux_interet_sup': interet_sup[0], 'fraix_fixe': frais_fixe, 'tva': tva[1], 'taux_tva': tva[0],
+                 'ircm': ircm[1], 'taux_ircm': ircm[0]})
 
             new_infos_account.append(info_account)
 
     elif type_account == "Courant":
 
-        pass
+        for info_account in accounts:
+            interets = [{'taux': 0, 'val': 0} for i in range(LEN_INTERET_DEBITEURS)]
+            com_mvt = {'taux': TAUX_COM_MVT, 'val': INITIAL_VALUE}
+            com_dec = {'taux': TAUX_DEC, 'val': INITIAL_VALUE}
+            tva = {'taux': TAUX_TVA, 'val': INITIAL_VALUE}
+            frais_fixe = 5000
+
+            try:
+                account_echelle = next(item for item in delta if item['num_compte'] == info_account['account'])
+            except Exception as e:
+                account_echelle = None
+
+            if account_echelle is not None:
+
+                # interet computing
+                echelle_deb = account_echelle['interets_debiteurs']
+
+                if echelle_deb is not None:
+                    keys = list(echelle_deb.keys())
+
+                    for i in range(len(keys)):
+                        if i == 2:
+                            break
+                        interets[i].update(echelle_deb[keys[i]])
+
+                # commissions
+                if account_echelle["comission_mouvement"] is not None:
+                    com_mvt.update(account_echelle["comission_mouvement"])
+
+                if account_echelle["comission_decouvert"] is not None:
+                    com_dec.update(account_echelle["comission_decouvert"])
+
+                # tva
+                if account_echelle['tva'] is not None:
+                    tva[0].update(account_echelle['tva'])
+
+                # frais fixes
+                if account_echelle['frais_fixe'] is not None:
+                    frais_fixe = account_echelle['frais_fixe']
+
+            # Update dict
+            info_account.update({"interet_"+ str(i) : a['val'] for i,a in enumerate(interets)})
+            info_account.update({"taux_interet_" + str(i): a['taux'] for i,a in enumerate(interets)})
+            info_account.update(
+                {'fraix_fixe': frais_fixe, 'tva': tva['val'], 'taux_tva': tva['taux'], 'com_mvt' : com_mvt['val'], 'taux_com_mvt' : com_mvt['taux'],
+                 'com_dec' : com_dec['val'], 'taux_com_dec' : com_dec['taux']})
 
 
+
+
+
+
+
+
+
+
+
+
+        # Loop and make the real stuff happen
 
 
 
