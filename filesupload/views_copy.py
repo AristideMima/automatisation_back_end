@@ -577,8 +577,8 @@ def computation_second_table(res_data, account):
     # 18
     calcul['FRAIS_FIXES'].append(seuil)
 
-    inter = [calcul[l] for l in list(calcul.keys())[:-2]]
-    val = list(map(sum, zip(*inter)))[0] * tva
+    inter = [calcul[l] for l in list(calcul.keys())[:-1]]
+    val = sum(list(map(sum, zip(*inter)))[1]) * tva
 
     calcul['TVA'].append(ceil(val))
 

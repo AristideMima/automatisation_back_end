@@ -6,8 +6,8 @@ from django.urls import include, path
 
 router = routers.DefaultRouter()
 router.register('api/historiques', HistoriqueView, 'historiques')
-router.register('api/comptes', CompteView, 'comptes')
-router.register('api/operations', OperationView, 'operations')
+# router.register('api/comptes', CompteView, 'comptes')
+# router.register('api/operations', OperationView, 'operations')
 
 urlpatterns = [
     path('', include(router.urls)),

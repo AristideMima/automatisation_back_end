@@ -60,21 +60,21 @@ from django.contrib.auth.models import User
 
 
 # New classes definitions
-
-class Compte(models.Model):
-    """
-        Account number class definition
-    """
-    num_compte = models.CharField(max_length=11, primary_key=True)
-    intitule_compte = models.CharField(max_length=100)
-    type_account = models.CharField(max_length=10, default='Courant')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-
-class Operation(models.Model):
-    code_operation = models.CharField(max_length=5, unique=True, primary_key=True)
-    libelle_operation = models.CharField(max_length=100, default="Pas de libellé")
-    created_at = models.DateTimeField(auto_now_add=True)
+#
+# class Compte(models.Model):
+#     """
+#         Account number class definition
+#     """
+#     num_compte = models.CharField(max_length=11, primary_key=True)
+#     intitule_compte = models.CharField(max_length=100)
+#     type_account = models.CharField(max_length=10, default='Courant')
+#     created_at = models.DateTimeField(auto_now_add=True)
+#
+#
+# class Operation(models.Model):
+#     code_operation = models.CharField(max_length=5, unique=True, primary_key=True)
+#     libelle_operation = models.CharField(max_length=100, default="Pas de libellé")
+#     created_at = models.DateTimeField(auto_now_add=True)
 
 
 class Echelle(models.Model):

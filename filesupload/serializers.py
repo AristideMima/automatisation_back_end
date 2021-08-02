@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Historic, Compte, Operation, Echelle, Results
+from .models import Historic,  Echelle, Results
 
 
 class HistoricSerializer(serializers.ModelSerializer):
@@ -8,17 +8,17 @@ class HistoricSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class CompteSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = Compte
-        fields = '__all__'
-
-
-class OperationSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Operation
-        fields = '__all__'
+# class CompteSerializer(serializers.ModelSerializer):
+#
+#     class Meta:
+#         model = Compte
+#         fields = '__all__'
+#
+#
+# class OperationSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = Operation
+#         fields = '__all__'
 
 
 class EchelleSerializer(serializers.ModelSerializer):

@@ -1,5 +1,5 @@
 from rest_framework import viewsets
-from .models import Historic, Compte, Operation
+from .models import *
 from .serializers import *
 from rest_framework.permissions import IsAuthenticated
 
@@ -17,19 +17,19 @@ class HistoriqueView(viewsets.ModelViewSet):
         return self.request.user.historics
 
 
-class CompteView(viewsets.ModelViewSet):
-
-    permission_classes = [IsAuthenticated]
-
-    queryset = Compte.objects.all()
-    serializer_class = CompteSerializer
-
-
-class OperationView(viewsets.ModelViewSet):
-
-    permission_classes = [IsAuthenticated]
-    queryset = Operation.objects.all()
-    serializer_class = OperationSerializer
+# class CompteView(viewsets.ModelViewSet):
+#
+#     permission_classes = [IsAuthenticated]
+#
+#     queryset = Compte.objects.all()
+#     serializer_class = CompteSerializer
+#
+#
+# class OperationView(viewsets.ModelViewSet):
+#
+#     permission_classes = [IsAuthenticated]
+#     queryset = Operation.objects.all()
+#     serializer_class = OperationSerializer
 
 
 class EchelleView(viewsets.ModelViewSet):
