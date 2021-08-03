@@ -264,7 +264,6 @@ def get_infos(request):
 
     # loop through all unique accounts
 
-    print(accounts)
     new_infos_account = []
     id = 0
 
@@ -456,8 +455,7 @@ class FileUpload(views.APIView):
                     data_excel = data_excel[all_cols]
 
                     data_excel.dropna(axis=0, how="all", inplace=True)
-
-                    print(data_excel.head())
+                    data_excel["Montant"].fillna(0, inplace=True)
 
                     if data_excel.isnull().sum().sum() != 0:
                         return JsonResponse({"message": "Le fichier {} contient des valeurs nulles".format(file)}, status=500)
@@ -526,7 +524,6 @@ def load_data_excel(data_excel, current_user, file):
 
     try:
         new_hist.save()
-        print("file saved")
     except Exception as e:
         return JsonResponse({"message": "Erreur d'enregistrement du fichier {} ".format(file)}, status=500)
 
@@ -574,9 +571,8 @@ def load_data_txt(datas_txt, current_user, file):
         'dates': '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)',
         'amount': '([0-9]+\.)+(\d{3}) XAF',
         'taxe_frais': 'TAXE/FRAIS{} ( )* TVA '.format(reg_numb),
-        'taxe_com_mvt': 'TAXE/COMMISSION DE MOUVEMENT{}'.format(reg_numb),
-        'com_mvt': 'COMMISSION DE MOUVEMENT({})+'.format(reg_numb),
-        'com_dec': 'COMMISSION/PLUS FORT DECOUVERT({})+'.format(reg_numb),
+        'com_mvt': ' COMMISSION DE MOUVEMENT({})+'.format(reg_numb),
+        'com_dec': ' COMMISSION/PLUS FORT DECOUVERT({})+'.format(reg_numb),
         'int_debit': ' INTERETS DEBITEURS({})+'.format(reg_numb),
         'int_credit': ' INTERETS CREDITEURS({})+'.format(reg_numb),
         'frais_fixe': 'FRAIS FIXES{}'.format(reg_numb),
@@ -590,8 +586,7 @@ def load_data_txt(datas_txt, current_user, file):
     # Try to fill all values
 
     code_agence, account_number, date_deb_arrete, date_fin_arrete, frais_fixe, ircm, interets_debiteurs, \
-    interets_crediteurs, tva, comission_mouvement, comission_decouvert, date_deb_arrete, date_fin_arrete, autorisations = [
-                                                                                                                              None] * 14
+    interets_crediteurs, tva, comission_mouvement, comission_decouvert, date_deb_arrete, date_fin_arrete, autorisations = [None] * 14
 
     new_ech = Echelle()
 
@@ -654,7 +649,7 @@ def load_data_txt(datas_txt, current_user, file):
     # Interets CREDITEURS
     try:
         all_int_crediteurs = [match.group() for match in re.finditer(regex_dict['int_credit'], datas)]
-        interets_crediteurs = {}
+        interets_crediteurs = []
         for i, interet in enumerate(all_int_crediteurs):
             val_int = get_interet(interet)
             taxe_int = get_interet(interet, pos_char=-2, sep=",")
@@ -727,8 +722,6 @@ def load_data_txt(datas_txt, current_user, file):
 
 # Processing functions
 def range_file(data_excel):
-    # print(data_excel.head())
-
     res_filter_date = data_excel.copy()
 
     res_filter_date['index'] = res_filter_date.index
@@ -889,7 +882,6 @@ def computation_second_table(res_data, account, type_account):
     calcul = {col: [] for col in cols_calcul}
 
     # # 14
-    print(sum(res_data['MVTS_13']))
     res = (sum(res_data['MVTS_13']) * taux_int_1) / 360
     calcul['INT_DEBITEURS_1'].append(int(res))
 
@@ -917,7 +909,6 @@ def computation_second_table(res_data, account, type_account):
     calcul['FRAIS_FIXES'].append(frais_fixe)
 
     inter = [calcul[l] for l in list(calcul.keys())[:-2]]
-    print(inter)
     val = list(map(sum, zip(*inter)))[0] * tva
 
     calcul['TVA'].append(ceil(val))
@@ -954,7 +945,6 @@ def computation_second_table_epargne(res_data, account, type_account):
     calcul = {col: [] for col in cols_calcul}
 
     # # 14
-    print(sum(res_data['MVTS_13']))
     res = (sum(res_data['MVTS_13']) * taux_int_1) / 360
     calcul['INT_INF'].append(int(res))
 
