@@ -1,0 +1,9 @@
+django-rest-knox
+pandas
+django
+djangorestframework
+markdown
+django-filter
+django-cors-headers
+mysqlclient
+Unidecode

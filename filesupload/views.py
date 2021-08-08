@@ -6,7 +6,6 @@ from django.http.response import StreamingHttpResponse
 import pandas as pd
 import pathlib
 from datetime import date, datetime, timedelta
-from pyexcel_xlsx import get_data
 from .models import *
 from django.utils.timezone import utc, now
 import re
@@ -33,6 +32,12 @@ TAUX_COM_MVT = 0.025
 TAUX_DEC = 0.020833
 TAUX_INT_DEB = 15.5
 LEN_INTERET_DEBITEURS = 3
+PATH_HISTORIQUE = "static/historiques/"
+PATH_AUTORISATION = "static/autorisations/"
+PATH_COMPTE = "static/comptes/"
+PATH_SOLDE = "static/soldes/"
+PATH_JOURNAUX = "static/journaux/"
+PATH_OPERATIONS = "static/operations/"
 
 
 class FileParser(BaseParser):
@@ -115,7 +120,7 @@ def make_calcul(request):
 
                 # Adding ecar
                 ecar = []
-                col_datas = ['interet_0', 'interet_1', 'interet_2', 'com_mvt','com_dec','fraix_fixe','tva']
+                col_datas = ['interet_0', 'interet_1', 'interet_2', 'com_mvt', 'com_dec', 'fraix_fixe', 'tva']
 
                 ecar.append(second['INT_DEBITEURS_1'][1] - account['interet_0'])
                 second['INT_DEBITEURS_1'].extend([account['interet_0'], ecar[-1]])
@@ -146,11 +151,13 @@ def make_calcul(request):
 
                 new_first.append({k: "" for k in list(first.keys())})
                 new_first.append({k: "" for k in list(first.keys())})
-                new_first.append({"SOLDES": "DESIGNATION", "SOLDE_JOUR": "TAUX", "jrs": "AGIOS", "DEBITS_NBR": "AMPLITUDE", "CREDIT_NBR": "ECART"})
+                new_first.append(
+                    {"SOLDES": "DESIGNATION", "SOLDE_JOUR": "TAUX", "jrs": "AGIOS", "DEBITS_NBR": "AMPLITUDE",
+                     "CREDIT_NBR": "ECART"})
 
                 for i, key in enumerate(list(second.keys())):
                     part_dict = {"col_0": key, "id": i}
-                    part_dict.update({"col_" + str(i+1): col for i, col in enumerate(second[key])})
+                    part_dict.update({"col_" + str(i + 1): col for i, col in enumerate(second[key])})
                     new_second.append(part_dict)
                     res = {'SOLDES': key, "SOLDE_JOUR": second[key][0], "jrs": second[key][1],
                            "DEBITS_NBR": second[key][2], "CREDIT_NBR": second[key][3]}
@@ -164,7 +171,7 @@ def make_calcul(request):
                 second = computation_second_table_epargne(pd.DataFrame(first), account, request.data['type_account'])
 
                 ecar = []
-                col_datas = ['INT_INF', 'INT_SUP', 'IRCM', 'fraix_fixe','tva']
+                col_datas = ['INT_INF', 'INT_SUP', 'IRCM', 'fraix_fixe', 'tva']
 
                 ecar.append(second['INT_INF'][1] - account['interet_inf'])
                 second['INT_INF'].extend([account['interet_inf'], ecar[-1]])
@@ -186,7 +193,9 @@ def make_calcul(request):
 
                 new_first.append({k: "" for k in list(first.keys())})
                 new_first.append({k: "" for k in list(first.keys())})
-                new_first.append({"SOLDES": "DESIGNATION", "SOLDE_JOUR": "TAUX", "jrs": "AGIOS", "DEBITS_NBR": "AMPLITUDE", "CREDIT_NBR": "ECART"})
+                new_first.append(
+                    {"SOLDES": "DESIGNATION", "SOLDE_JOUR": "TAUX", "jrs": "AGIOS", "DEBITS_NBR": "AMPLITUDE",
+                     "CREDIT_NBR": "ECART"})
 
                 # Rename second dict keys
                 second['INTERETS <= 10 000 000'] = second.pop('INT_INF')
@@ -194,7 +203,7 @@ def make_calcul(request):
 
                 for i, key in enumerate(list(second.keys())):
                     part_dict = {"col_0": key, "id": i}
-                    part_dict.update({"col_" + str(i+1): col for i, col in enumerate(second[key])})
+                    part_dict.update({"col_" + str(i + 1): col for i, col in enumerate(second[key])})
                     new_second.append(part_dict)
                     res = {'SOLDES': key, "SOLDE_JOUR": second[key][0], "jrs": second[key][1],
                            "DEBITS_NBR": second[key][2], "CREDIT_NBR": second[key][3]}
@@ -237,188 +246,68 @@ def get_infos(request):
     data = request.data
 
     # Define direction and account type
-    direction = data['conf']
     type_account = data['type_account']
 
-    # Steps: 1- select by config,
-    # select:
+    # Read last historic
+    try:
+        last_history = File.objects.get(active_file=True, file_type="historique")
+    except FileNotFoundError as e:
+        return {}
 
-    # Get all  infos base on history
+    # Read account
+    try:
+        path_account = PATH_COMPTE + last_history.file_path
+        accounts = pd.DataFrame(pd.read_csv(path_account, compression="gzip"))
+    except:
+        return {}
 
-    # Get latest history
-    save_history = Historic.objects.filter(user=request.user).latest('created_at').historic
+    # Read last solde
+    data_sold, data_auto = [None]*2
+    try:
+        last_solde = File.objects.get(active_file=True, file_type="solde")
+        path_solde = PATH_SOLDE + last_solde.file_path
+        data_sold = pd.DataFrame(pd.read_csv(path_solde, compression="gzip"))
+    except:
+        pass
 
-    if save_history:
-        save_history = loads(save_history)
-        historic = pd.read_json(save_history['historic'])
-        accounts = pd.DataFrame(save_history['accounts'])
-        accounts = accounts[accounts.type_compte == type_account]
-        accounts = list(pd.DataFrame(accounts).T.to_dict().values())
-        operations = pd.DataFrame(save_history['operations'])
-    else:
-        return Response(500)
+    # Add last sold
+    if data_sold is not None:
 
-    delta = list(Echelle.objects.filter(user=request.user).values())
-
-    echelle_accounts = pd.DataFrame(list(Echelle.objects.filter(user=request.user).values('num_compte')))['num_compte'].unique()
-
-    # loop through all unique accounts
-
-    new_infos_account = []
-    id = 0
-
-    if type_account == "Epargne":
-
-        for info_account in accounts:
-
-            if info_account['num_compte'] not in echelle_accounts:
-                continue
-
-            # Initialization
-            interet_inf = [TAUX_INT_EPARGNE, INITIAL_VALUE]
-            interet_sup = [TAUX_INT_EPARGNE, INITIAL_VALUE]
-            ircm = [TAUX_IRCM_EPARGNE, INITIAL_VALUE]
-            tva = [TAUX_TVA, INITIAL_VALUE]
-            frais_fixe = 2000
-            autorisations = {}
-
-            try:
-                account_echelle = next(item for item in delta if item['num_compte'] == info_account['account'])
-            except Exception as e:
-                account_echelle = None
-
-            if account_echelle is not None:
-
-                info_account.update({"code_agence": account_echelle['code_agence']})
-
-                # 1- Interets
-
-                echelle_deb, echelle_cred = account_echelle['interets_debiteurs'], account_echelle[
-                    'interets_crediteurs']
-
-                # Intermediate fonction for interest
-                def get_interets_epargne(interets):
-
-                    taux_init = 0
-                    int_inf = 0
-                    int_sup = 0
-
-                    for ind, item in enumerate(interets):
-                        if ind == 0:
-                            taux_init = item['taux']
-
-                        val_interet = item['val']
-
-                        if val_interet <= SEUIL_INT_INF:
-                            int_inf += val_interet
-                        else:
-                            int_sup += val_interet
-
-                    return taux_init, int_inf, int_sup
-
-                if echelle_deb is not None:
-                    res_deb = get_interets_epargne(echelle_deb)
-                    interet_inf[0] = res_deb[0]
-                    interet_inf[1] += res_deb[1]
-                    interet_sup[1] += res_deb[2]
-
-                if echelle_cred is not None:
-                    res_cred = get_interets_epargne(echelle_cred)
-                    interet_sup[0] = res_cred[0]
-                    interet_sup[1] += res_cred[1]
-                    interet_inf[1] += res_cred[2]
-
-                # 2- Tva
-                if account_echelle['tva'] is not None:
-                    tva[0] = account_echelle['tva']['taux']
-                    tva[1] = account_echelle['tva']['val']
-
-                # 3- Ircm
-                ircm[1] = ceil(interet_sup[1] * TAUX_IRCM_EPARGNE / 100)
-
-                # 4- frais fixe
-                if account_echelle['frais_fixe'] is not None:
-                    frais_fixe = account_echelle['frais_fixe']
-
-                # autorisations
-                if account_echelle['autorisations'] is not None:
-                    autorisations = account_echelle['autorisations']
-
-            # Final step: Update the dictionnary
-            info_account.update(autorisations)
-            info_account.update(
-                {'interet_inf': interet_inf[1], 'taux_interet_inf': interet_inf[0], 'interet_sup': interet_sup[1],
-                 'taux_interet_sup': interet_sup[0], 'fraix_fixe': frais_fixe, 'tva': tva[1], 'taux_tva': tva[0],
-                 'ircm': ircm[1], 'taux_ircm': ircm[0]})
-
-            new_infos_account.append(info_account)
-
-    elif type_account == "Courant":
-
-        for info_account in accounts:
-
-            if info_account['num_compte'] not in echelle_accounts:
-                continue
-
-            interets = [{'taux': 0, 'val': 0} for i in range(LEN_INTERET_DEBITEURS)]
-            autorisations = {}
-            com_mvt = {'taux': TAUX_COM_MVT, 'val': INITIAL_VALUE}
-            com_dec = {'taux': TAUX_DEC, 'val': INITIAL_VALUE}
-            tva = {'taux': TAUX_TVA, 'val': INITIAL_VALUE}
-            frais_fixe = 5000
-            solde_initial = 0
-            info_account.update({"solde_initial": solde_initial, "id": id})
-            id += 1
-
-            try:
-                account_echelle = next(item for item in delta if item['num_compte'] == info_account['num_compte'])
-            except Exception as e:
-                account_echelle = None
-
-            if account_echelle is not None:
-
-                info_account.update({"code_agence": account_echelle['code_agence']})
-
-                # interet computing
-                echelle_deb = account_echelle['interets_debiteurs']
-
-                if echelle_deb is not None:
-                    for i in range(len(echelle_deb)):
-                        if i == 2:
-                            break
-                        interets[i].update(echelle_deb[i])
-
-                # commissions
-                if account_echelle["comission_mouvement"] is not None:
-                    com_mvt.update(account_echelle["comission_mouvement"])
-
-                if account_echelle["comission_decouvert"] is not None:
-                    com_dec.update(account_echelle["comission_decouvert"])
-
-                # tva
-                if account_echelle['tva'] is not None:
-                    tva.update(account_echelle['tva'])
-
-                # frais fixes
-                if account_echelle['frais_fixe'] is not None:
-                    frais_fixe = account_echelle['frais_fixe']
-
-                if account_echelle['autorisations'] is not None:
-                    autorisations.update(account_echelle['autorisations'])
-
-            # Update dict
-            info_account.update({"interet_" + str(i): a['val'] for i, a in enumerate(interets)})
-            info_account.update({"taux_interet_" + str(i): a['taux'] for i, a in enumerate(interets)})
-            info_account.update(autorisations)
-            info_account.update(
-                {'fraix_fixe': frais_fixe, 'tva': tva['val'], 'taux_tva': tva['taux'], 'com_mvt': com_mvt['val'],
-                 'taux_com_mvt': com_mvt['taux'],
-                 'com_dec': com_dec['val'], 'taux_com_dec': com_dec['taux']})
-            new_infos_account.append(info_account)
+        accounts = accounts.merge(data_sold[['N° Compte', 'Solde']], on='N° Compte', how="left")
+        accounts.rename(columns={"Solde": "solde_initial"}, inplace=True)
+        accounts['solde_initial'].fillna(0, inplace=True)
 
     else:
-        return Response(500)
-    return Response(new_infos_account)
+        accounts['solde_initial'] = 0
+
+    # Add autorisations
+    try:
+        last_auto = File.objects.get(active_file=True, file_type="autorisation")
+        path_auto = PATH_AUTORISATION + last_auto.file_path
+        data_auto = pd.read_csv(path_auto, compression="gzip")
+    except:
+        pass
+
+    if data_auto is not None:
+        accounts = accounts.merge(data_auto[['Date de fin', 'Date Mise en Place', 'Montant', 'N° Compte']], on='N° Compte', how="left")
+        accounts.rename(columns={'Date de fin': 'fin_autorisation', 'Montant':'montant', 'Date Mise en Place': 'debut_autorisation'}, inplace=True)
+        accounts['montant'].fillna(0, inplace=True)
+        accounts['fin_autorisation'].fillna("", inplace=True)
+        accounts['debut_autorisation'].fillna("", inplace=True)
+    else:
+        accounts['montant'] = 0
+        accounts['debut_autorisation'] = ""
+        accounts['fin_autorisation'] = ""
+
+    # Finish
+    res_accounts = accounts[accounts['Type de Compte'] == type_account].copy()
+    res_accounts.rename(columns={"N° Compte": "num_compte", "Type de Compte": "type_compte"}, inplace=True)
+    res_accounts.num_compte = res_accounts.num_compte.astype(str).str.zfill(11)
+    res_accounts['id'] = res_accounts.index
+
+    res_accounts = list(res_accounts.T.to_dict().values())
+    return Response(res_accounts)
+
 
 
 class FileUpload(views.APIView):
@@ -436,288 +325,460 @@ class FileUpload(views.APIView):
         if len(files) == 0:
             return Response(500)
 
-        for file in files:
+        file = files[0]
+        file_path = str(file) + "---" + str(datetime.now()).replace(":", "-") + ".csv"
 
-            current_user = request.user
+        choice = request.data['choice']
 
-            if file:
-                if pathlib.Path(str(file)).suffix in [".xls", ".xlsx"]:
+        # Match corresponding choices
+        if choice == "historique":
 
-                    cols_str = ['Code Agence', 'N° compte', 'Code Opération', 'Intitulé compte', 'Sens', 'Libellé Opération']
-                    cols_dates = ['Date Comptable', 'Date de Valeur']
-                    all_cols = cols_dates + cols_str + ["Montant"]
-                    try:
-                        data_excel = pd.read_excel(file, skiprows=2, dtype={val: str for val in cols_str},
-                                                   parse_dates=cols_dates, dayfirst=True)
-                    except Exception as e:
-                        return JsonResponse({"message": "Le fichier {} ne respecte pas le format exigé - voir le guide".format(file)}, status=500)
+            try:
+                datas = pd.read_csv(file, sep="|", header=None, low_memory=False)
+                datas.rename(columns={0: "Date Comptable", 1: "Code Agence", 2: "N° Compte", 3: "Devise", 5: "Sens",
+                                      6: "Montant", 7: "Code Opération", 8: "Libellé Opération", 10: "Date de Valeur"},
+                             inplace=True)
+                cols = ["Date Comptable", "Code Agence", "N° Compte", "Devise", "Sens", "Montant", "Code Opération",
+                        "Libellé Opération", "Date de Valeur"]
 
-                    data_excel = data_excel[all_cols]
+                # Will be drop later 
+                datas.dropna(subset=cols, inplace=True)
 
-                    data_excel.dropna(axis=0, how="all", inplace=True)
-                    data_excel["Montant"].fillna(0, inplace=True)
+                final_data = datas[cols]
 
-                    if data_excel.isnull().sum().sum() != 0:
-                        return JsonResponse({"message": "Le fichier {} contient des valeurs nulles".format(file)}, status=500)
-                    # data_excel.drop(columns=['Unnamed: 0'], inplace=True)
+                final_data = datas[cols].copy()
 
-                    load_data_excel(data_excel.copy(), current_user, file)
+                # Fill values
+                final_data['Date Comptable'] = pd.to_datetime(final_data['Date Comptable'], errors="ignore").dt.date
+                final_data['Date de Valeur'] = pd.to_datetime(final_data['Date de Valeur'], errors="ignore").dt.date
 
-                else:
-                    data_excel = pd.read_csv(file, sep='\n', encoding='unicode_escape', header=None, squeeze=True)
-                    load_data_txt(data_excel.copy(), current_user, file)
+                # Str columns
+                for col in ["Devise", "Sens", "Libellé Opération", "Code Opération", "Code Agence",
+                            "Montant"]:
+                    final_data[col] = final_data[col].astype(str)
+
+                final_data['N° Compte'] = final_data['N° Compte'].apply(lambda x: str(x).zfill(11))
+
+                # Processing Amount
+                final_data['Montant'] = final_data['Montant'].apply(lambda x: int(x.split(",")[0]))
+                comptes = pd.DataFrame({"N° Compte": final_data['N° Compte'].unique()})
+                comptes['Type de Compte'] = final_data['N° Compte'].apply(
+                    lambda x: "Epargne" if x[-4:-1] == "110" else "Courant")
+
+                path_histo = PATH_HISTORIQUE + file_path
+                path_operations = PATH_OPERATIONS + file_path
+                path_compte = PATH_COMPTE + file_path
+
+                # Processing operations
+                operations = pd.DataFrame({"Code Opération": final_data['Code Opération'].unique()})
+
+                global codes
+                with open(CODES_PATH, "r") as file_codes:
+                    codes = load(file_codes)
+
+                operations['Code Opération'] = operations['Code Opération'].apply(fill_operation)
+
+                # save datas 
+                # Update latest record
+                try:
+                    modify_last_record(choice)
+                except File.DoesNotExist:
+                    pass
+
+                options = {"date_inf": final_data['Date Comptable'].min(),
+                           "date_sup": final_data['Date Comptable'].max(), "len": len(final_data)}
+
+                res = save_file(request.user, file_path, choice, options)
+                if res is not None:
+                    return JsonResponse(
+                        {"message": "Le fichier {} est déjà présent en base de données".format(file)},
+                        status=500)
+
+                final_data.to_csv(path_histo, index=False, compression="gzip")
+                comptes.to_csv(path_compte, index=False, compression="gzip")
+                operations.to_csv(path_operations, index=False, compression="gzip")
+
+            except Exception as e:
+                return JsonResponse(
+                    {"message": "Le fichier {} ne respecte pas le format exigé - voir le guide".format(file)},
+                    status=500)
+
+        elif choice == "solde":
+
+            # Loading all initial soldes inside the data base
+            try:
+
+                datas_soldes = pd.read_csv(file, sep="|", header=None)
+                datas_soldes.rename(
+                    columns={0: "Code Agence", 1: "Devise", 2: "N° Compte", 3: "Année", 4: "Mois", 6: "Date Solde",
+                             7: "Solde", 8: "Date Mois Suivant"}, inplace=True)
+
+
+                datas_soldes['N° Compte'] = datas_soldes['N° Compte'].apply(lambda x: str(x).zfill(11))
+                datas_soldes['Date Solde'] = pd.to_datetime(datas_soldes['Date Solde'], errors="ignore").dt.date
+                datas_soldes['Date Mois Suivant'] = pd.to_datetime(datas_soldes['Date Mois Suivant'],
+                                                                   errors="ignore").dt.date
+                datas_soldes.sort_values(by='Date Solde', ascending=False, inplace=True)
+                datas_soldes.drop_duplicates(subset='N° Compte', keep='first', inplace=True)
+                datas_soldes['Solde'] = datas_soldes['Solde'].apply(lambda x: int(x.split(",")[0]))
+                datas_soldes = datas_soldes[['N° Compte', 'Solde', 'Date Solde', 'Date Mois Suivant', 'Mois']]
+                datas_soldes['Mois'] = datas_soldes['Mois'].apply(lambda x: int(x.split(",")[0]))
+
+            except Exception as e:
+                return JsonResponse(
+                    {"message": "Le fichier {} ne respecte pas le format exigé - voir le guide".format(file)},
+                    status=500)
+
+            if datas_soldes.isnull().sum().sum() != 0:
+                return JsonResponse({"message": "Le fichier {} contient des valeurs nulles".format(file)}, status=500)
+
+            # save soldes datas on disk and save it in database
+            try:
+                # Update latest record
+                try:
+                    modify_last_record(choice)
+                except File.DoesNotExist:
+                    pass
+
+                # Save new added file
+                options = {"date_inf": datas_soldes['Date Solde'].min(),
+                           "date_sup": datas_soldes['Date Mois Suivant'].max(), "len": len(datas_soldes)}
+                res = save_file(request.user, file_path, choice, options)
+
+                if res is not None:
+                    return JsonResponse(
+                        {"message": "Le fichier {} est déjà présent en base de données".format(file)},
+                        status=500)
+
+                path_solde = PATH_SOLDE + file_path
+                datas_soldes.to_csv(path_solde, index=False, compression="gzip")
+
+            except Exception as e:
+                return JsonResponse(
+                    {"message": "Une erreur est survenue lors de l'enregistrement du fichier {}".format(file)},
+                    status=500)
+
+        elif choice == "autorisation":
+
+            try:
+                datas_autorisations = pd.read_csv(file, sep="|", header=None)
+                datas_autorisations.rename(columns={0: "Code Agence", 1: "N° Compte", 2: "Clé", 3: "Date Mise en Place", 4: "Date de fin",5: "Montant", 6: "Taux", 10: "Date de Valeur"}, inplace=True)
+                datas_autorisations['Date Mise en Place'] = pd.to_datetime(datas_autorisations['Date Mise en Place']).dt.date
+                datas_autorisations['Date de fin'] = pd.to_datetime(datas_autorisations['Date Mise en Place']).dt.date
+                datas_autorisations['Montant'] = datas_autorisations['Montant'].apply(lambda x: int(x.split(",")[0]))
+                datas_autorisations.sort_values(by='Date Mise en Place', ascending=False, inplace=True)
+                datas_autorisations.drop_duplicates(subset='N° Compte', keep='first', inplace=True)
+                datas_autorisations['N° Compte'] = datas_autorisations['N° Compte'].apply(lambda x: str(x).zfill(11))
+                path_auto = PATH_AUTORISATION + file_path
+
+                try:
+                    modify_last_record(choice)
+                except File.DoesNotExist:
+                    pass
+
+                # Save new added file
+                options = {"date_inf": datas_autorisations['Date Mise en Place'].min(),
+                           "date_sup": datas_autorisations['Date de fin'].max(), "len": len(datas_autorisations)}
+                res = save_file(request.user, file_path, choice, options)
+                if res is not None:
+                    return JsonResponse(
+                        {"message": "Le fichier {} est déjà présent en base de données".format(file)},
+                        status=500)
+
+                datas_autorisations.to_csv(path_auto, index=False, compression="gzip")
+            except:
+                return JsonResponse(
+                    {"message": "Une erreur est survenue lors de l'enregistrement du fichier {}".format(file)},
+                    status=500)
+
+        elif choice == "journal":
+            # We'll do stuff later
+            pass
 
         return Response(204)
 
 
-# Load datas excel file
-def load_data_excel(data_excel, current_user, file):
-    # Delete all rows on new uploading
-
-    accounts = []
-
-    operations = (data_excel['Code Opération'].astype(str)).unique().tolist()
-
-    all_accounts = data_excel['N° compte'].unique().tolist()
-    # Process accounts
-    for account in all_accounts:
-
-        type_account = "Courant"
-
-        datas = data_excel[data_excel['N° compte'] == account]
-        # Get all intitule and operation code
-        intitule = datas['Intitulé compte'].mode()[0]
-        codes_operation = datas['Code Opération'].unique().tolist()
-
-        if "epargne" in unidecode(intitule.lower()) or "100" in codes_operation:
-            type_account = "Epargne"
-
-        accounts.append({"num_compte": account, "intitule": intitule, "type_compte": type_account})
-
-    # Save operations
-    if len(operations) != 0:
-
-        operations = []
-        libelle_operation = "No libelle"
-        with open(CODES_PATH, "r") as file:
-            codes = load(file)
-        for op in operations:
-
-            # Try to get his corresponding code
-            try:
-                libelle_operation = codes[op]
-            except Exception as e:
-                print(e)
-            operations.append({"code_operation": op, "libelle_operation": libelle_operation})
-
-        file.close()
-
-    # save historic
-    new_hist = Historic()
-    data_excel['Date Comptable'] = data_excel['Date Comptable'].astype('str')
-    data_excel['Date de Valeur'] = data_excel['Date de Valeur'].astype('str')
-
-    historic_part = data_excel.to_json()
-    formatted_historic = {"historic": historic_part, "accounts": accounts, "operations": operations}
-    new_hist.historic = dumps(formatted_historic)
-    new_hist.user = current_user
-
+def fill_operation(code_operation):
+    libelle_operation = "No libelle"
     try:
-        new_hist.save()
+        libelle_operation = codes[code_operation]
     except Exception as e:
-        return JsonResponse({"message": "Erreur d'enregistrement du fichier {} ".format(file)}, status=500)
+        pass
+
+    return libelle_operation
+
+
+# Modify last record 
+def modify_last_record(choice):
+    prev = File.objects.get(active_file=True, file_type=choice)
+    prev.active_file = False
+    prev.save()
+
+
+def save_file(user, file_path, choice, options):
+    try:
+        new_file = File()
+        new_file.user = user
+        new_file.file_path = file_path
+        new_file.file_type = choice
+        new_file.date_inf = options['date_inf']
+        new_file.date_sup = options['date_sup']
+        new_file.longueur = options['len']
+        new_file.active_file = True
+        new_file.save()
+        return None
+    except Exception as e:
+        return "oups"
+
+
+# Load datas excel file
+# def load_data_excel(data_excel, current_user, file):
+#     # Delete all rows on new uploading
+#
+#     accounts = []
+#
+#     operations = (data_excel['Code Opération'].astype(str)).unique().tolist()
+#
+#     all_accounts = data_excel['N° compte'].unique().tolist()
+#     # Process accounts
+#     for account in all_accounts:
+#
+#         type_account = "Courant"
+#
+#         datas = data_excel[data_excel['N° compte'] == account]
+#         # Get all intitule and operation code
+#         intitule = datas['Intitulé compte'].mode()[0]
+#         codes_operation = datas['Code Opération'].unique().tolist()
+#
+#         if "epargne" in unidecode(intitule.lower()) or "100" in codes_operation:
+#             type_account = "Epargne"
+#
+#         accounts.append({"num_compte": account, "intitule": intitule, "type_compte": type_account})
+#
+#     # Save operations
+#     if len(operations) != 0:
+#
+#         operations = []
+#         libelle_operation = "No libelle"
+#         with open(CODES_PATH, "r") as file:
+#             codes = load(file)
+#         for op in operations:
+#
+#             # Try to get his corresponding code
+#             try:
+#                 libelle_operation = codes[op]
+#             except Exception as e:
+#                 print(e)
+#             operations.append({"code_operation": op, "libelle_operation": libelle_operation})
+#
+#         file.close()
+#
+#     # save historic
+#     new_hist = Historic()
+#     data_excel['Date Comptable'] = data_excel['Date Comptable'].astype('str')
+#     data_excel['Date de Valeur'] = data_excel['Date de Valeur'].astype('str')
+#
+#     historic_part = data_excel.to_json()
+#     formatted_historic = {"historic": historic_part, "accounts": accounts, "operations": operations}
+#     new_hist.historic = dumps(formatted_historic)
+#     new_hist.user = current_user
+#
+#     try:
+#         new_hist.save()
+#     except Exception as e:
+#         return JsonResponse({"message": "Erreur d'enregistrement du fichier {} ".format(file)}, status=500)
 
 
 # load datas txt file
-def load_data_txt(datas_txt, current_user, file):
-    # code_agence , account_number, amount, dates = None, None, None, None
+# def load_data_txt(datas_txt, current_user, file):
+# code_agence , account_number, amount, dates = None, None, None, None
 
-    auto_part = 40
-    stri = datas_txt.tail(auto_part).values.tolist()
-    string_datas = " ".join(stri)
+# auto_part = 40
+# stri = datas_txt.tail(auto_part).values.tolist()
+# string_datas = " ".join(stri)
 
-    global datas
-    datas = string_datas
+# global datas
+# datas = string_datas
 
-    def get_value(colname, position, sep=" "):
-        """
-        :param: column name, position
-        :return: corresponded value
-        """
-        value = re.search(regex_dict[colname], datas).group().split(sep)[position]
-        return value
 
-    def get_interet(string, pos_char=-1, sep="."):
+# def get_value(colname, position, sep=" "):
+#     """
+#     :param: column name, position
+#     :return: corresponded value
+#     """
+#     value = re.search(regex_dict[colname], datas).group().split(sep)[position]
+#     return value
 
-        if isinstance(string, list):
-            string = string[0]
+# def get_interet(string, pos_char=-1, sep="."):
 
-        initial = string.split()[pos_char]
+#     if isinstance(string, list):
+#         string = string[0]
 
-        value = None
+#     initial = string.split()[pos_char]
 
-        if sep == ".":
-            value = int(initial.replace(sep, ""))
-        else:
-            value = float(initial.replace(sep, "."))
+#     value = None
 
-        return value
+#     if sep == ".":
+#         value = int(initial.replace(sep, ""))
+#     else:
+#         value = float(initial.replace(sep, "."))
 
-    reg_numb = "( )*(-)?([0-9\.,]+)(\d)+( )*[(TVA)(%)]*"
-    date_reg = '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)'
-    regex_dict = {
-        'code': '\d{4} -',
-        'account': 'XAF-\d{11}-\d{2}',
-        'dates': '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)',
-        'amount': '([0-9]+\.)+(\d{3}) XAF',
-        'taxe_frais': 'TAXE/FRAIS{} ( )* TVA '.format(reg_numb),
-        'com_mvt': ' COMMISSION DE MOUVEMENT({})+'.format(reg_numb),
-        'com_dec': ' COMMISSION/PLUS FORT DECOUVERT({})+'.format(reg_numb),
-        'int_debit': ' INTERETS DEBITEURS({})+'.format(reg_numb),
-        'int_credit': ' INTERETS CREDITEURS({})+'.format(reg_numb),
-        'frais_fixe': 'FRAIS FIXES{}'.format(reg_numb),
-        'net_deb': 'NET A DEBITER{}'.format(reg_numb),
-        'solde_val': 'SOLDE EN VALEUR APRES AGIOS{}'.format(reg_numb),
-        'tva': '(TAXE/INTERETS DEBITEURS|TAXE/COMM. PLUS FORT DECOUVERT|TAXE/COMMISSION DE MOUVEMENT|TAXE/FRAIS)({})+( )*'.format(
-            reg_numb),
-        'ircm': 'PRELEVEMENT LIBERATOIRE a compter du ( )* {}( )*({})+'.format(date_reg, reg_numb)
-    }
+#     return value
 
-    # Try to fill all values
+# reg_numb = "( )*(-)?([0-9\.,]+)(\d)+( )*[(TVA)(%)]*"
+# date_reg = '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)'
+# regex_dict = {
+#     'code': '\d{4} -',
+#     'account': 'XAF-\d{11}-\d{2}',
+#     'dates': '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)',
+#     'amount': '([0-9]+\.)+(\d{3}) XAF',
+#     'taxe_frais': 'TAXE/FRAIS{} ( )* TVA '.format(reg_numb),
+#     'com_mvt': ' COMMISSION DE MOUVEMENT({})+'.format(reg_numb),
+#     'com_dec': ' COMMISSION/PLUS FORT DECOUVERT({})+'.format(reg_numb),
+#     'int_debit': ' INTERETS DEBITEURS({})+'.format(reg_numb),
+#     'int_credit': ' INTERETS CREDITEURS({})+'.format(reg_numb),
+#     'frais_fixe': 'FRAIS FIXES{}'.format(reg_numb),
+#     'net_deb': 'NET A DEBITER{}'.format(reg_numb),
+#     'solde_val': 'SOLDE EN VALEUR APRES AGIOS{}'.format(reg_numb),
+#     'tva': '(TAXE/INTERETS DEBITEURS|TAXE/COMM. PLUS FORT DECOUVERT|TAXE/COMMISSION DE MOUVEMENT|TAXE/FRAIS)({})+( )*'.format(
+#         reg_numb),
+#     'ircm': 'PRELEVEMENT LIBERATOIRE a compter du ( )* {}( )*({})+'.format(date_reg, reg_numb)
+# }
 
-    code_agence, account_number, date_deb_arrete, date_fin_arrete, frais_fixe, ircm, interets_debiteurs, \
-    interets_crediteurs, tva, comission_mouvement, comission_decouvert, date_deb_arrete, date_fin_arrete, autorisations = [None] * 14
+# # Try to fill all values
+# code_agence, account_number, date_deb_arrete, date_fin_arrete, frais_fixe, ircm, interets_debiteurs, \
+# interets_crediteurs, tva, comission_mouvement, comission_decouvert, date_deb_arrete, date_fin_arrete, autorisations = [None] * 14
 
-    new_ech = Echelle()
+# new_ech = Echelle()
 
-    try:
-        new_dates = []
-        code_agence = get_value('code', 0)
-        account_number = get_value('account', 1, "-")
-        dates = re.findall(regex_dict['dates'], datas)
-        dates = dates[:-1] if len(dates) % 2 != 0 else dates
+# try:
+#     new_dates = []
+#     code_agence = get_value('code', 0)
+#     account_number = get_value('account', 1, "-")
+#     dates = re.findall(regex_dict['dates'], datas)
+#     dates = dates[:-1] if len(dates) % 2 != 0 else dates
 
-        # get all dates
-        for single_date in dates:
-            res = [int(num) for num in single_date[::-1]]
-            new_date = date(res[0], res[1], res[2])
-            new_dates.append(new_date)
+#     # get all dates
+#     for single_date in dates:
+#         res = [int(num) for num in single_date[::-1]]
+#         new_date = date(res[0], res[1], res[2])
+#         new_dates.append(new_date)
 
-        date_deb_arrete = new_dates[0]
-        date_fin_arrete = new_dates[1]
+#     date_deb_arrete = new_dates[0]
+#     date_fin_arrete = new_dates[1]
 
-        frais_fixe = int(re.search(regex_dict['frais_fixe'], datas).group().split()[-1].replace(".", ""))
+#     frais_fixe = int(re.search(regex_dict['frais_fixe'], datas).group().split()[-1].replace(".", ""))
 
-    except Exception as e:
-        print(e)
+# except Exception as e:
+#     print(e)
 
-    # Autorisations
+# # Autorisations
 
-    if new_dates and len(new_dates) > 2:
-        try:
-            montants = [int(match.group().replace("XAF", "").replace(".", "")) for match in
-                        re.finditer(regex_dict['amount'], datas)]
-            j = 0
-            part_autorisations = []
-            for i in range(0, len(new_dates[2:]), 2):
-                part_autorisations.append({'montant': montants[j], 'debut_autorisation': new_dates[i + 2],
-                                           'fin_autorisation': new_dates[i + 3]})
-                j += 1
-            if len(part_autorisations) != 0:
-                autos = pd.DataFrame(part_autorisations).sort_values(by='debut_autorisation', ascending=False)
-                autos.debut_autorisation = autos.debut_autorisation.astype('str')
-                autos.fin_autorisation = autos.fin_autorisation.astype('str')
-                autos.montant = autos.montant.astype('int')
-                autorisations = autos.iloc[0].to_dict()
-                autorisations['montant'] = int(autorisations['montant'])
+# if new_dates and len(new_dates) > 2:
+#     try:
+#         montants = [int(match.group().replace("XAF", "").replace(".", "")) for match in
+#                     re.finditer(regex_dict['amount'], datas)]
+#         j = 0
+#         part_autorisations = []
+#         for i in range(0, len(new_dates[2:]), 2):
+#             part_autorisations.append({'montant': montants[j], 'debut_autorisation': new_dates[i + 2],
+#                                        'fin_autorisation': new_dates[i + 3]})
+#             j += 1
+#         if len(part_autorisations) != 0:
+#             autos = pd.DataFrame(part_autorisations).sort_values(by='debut_autorisation', ascending=False)
+#             autos.debut_autorisation = autos.debut_autorisation.astype('str')
+#             autos.fin_autorisation = autos.fin_autorisation.astype('str')
+#             autos.montant = autos.montant.astype('int')
+#             autorisations = autos.iloc[0].to_dict()
+#             autorisations['montant'] = int(autorisations['montant'])
 
-        except Exception as e:
-            print(e)
+#     except Exception as e:
+#         print(e)
 
-    # Interets DEBITEURS
-    try:
-        all_int_debiteurs = [match.group() for match in re.finditer(regex_dict['int_debit'], datas)]
-        interets_debiteurs = []
-        for i, interet in enumerate(all_int_debiteurs):
-            val_int = get_interet(interet)
-            taxe_int = get_interet(interet, pos_char=-2, sep=",")
-            interets_debiteurs.append({'val': val_int, 'taux': taxe_int})
+# # Interets DEBITEURS
+# try:
+#     all_int_debiteurs = [match.group() for match in re.finditer(regex_dict['int_debit'], datas)]
+#     interets_debiteurs = []
+#     for i, interet in enumerate(all_int_debiteurs):
+#         val_int = get_interet(interet)
+#         taxe_int = get_interet(interet, pos_char=-2, sep=",")
+#         interets_debiteurs.append({'val': val_int, 'taux': taxe_int})
 
-    except Exception as e:
-        print(e)
+# except Exception as e:
+#     print(e)
 
-    # Interets CREDITEURS
-    try:
-        all_int_crediteurs = [match.group() for match in re.finditer(regex_dict['int_credit'], datas)]
-        interets_crediteurs = []
-        for i, interet in enumerate(all_int_crediteurs):
-            val_int = get_interet(interet)
-            taxe_int = get_interet(interet, pos_char=-2, sep=",")
-            interets_crediteurs.append({'val': val_int, 'taux': taxe_int})
-    except Exception as e:
-        print(e)
+# # Interets CREDITEURS
+# try:
+#     all_int_crediteurs = [match.group() for match in re.finditer(regex_dict['int_credit'], datas)]
+#     interets_crediteurs = []
+#     for i, interet in enumerate(all_int_crediteurs):
+#         val_int = get_interet(interet)
+#         taxe_int = get_interet(interet, pos_char=-2, sep=",")
+#         interets_crediteurs.append({'val': val_int, 'taux': taxe_int})
+# except Exception as e:
+#     print(e)
 
-    # IRCM
-    try:
-        all_ircm = re.search(regex_dict['ircm'],
-                             string_datas.translate(str.maketrans({val: ' ' for val in ['\n', '!', '-']}))).group(
-            0).strip().split()
-        ircm = {'val': int(all_ircm[-1].replace('.', '')), 'taux': float(all_ircm[-2].replace(',', '.'))}
-    except Exception as e:
-        print(e)
+# # IRCM
+# try:
+#     all_ircm = re.search(regex_dict['ircm'],
+#                          string_datas.translate(str.maketrans({val: ' ' for val in ['\n', '!', '-']}))).group(
+#         0).strip().split()
+#     ircm = {'val': int(all_ircm[-1].replace('.', '')), 'taux': float(all_ircm[-2].replace(',', '.'))}
+# except Exception as e:
+#     print(e)
 
-    # Commission mouvement
-    try:
-        res_mvt = [re.search(regex_dict['com_mvt'], datas).group()]
-        taxe_com_mvt = get_interet(res_mvt, pos_char=-2, sep=",")
-        com_mvt = get_interet(res_mvt)
-        comission_mouvement = {'val': com_mvt, 'taux': taxe_com_mvt}
-    except Exception as e:
-        print(e)
+# # Commission mouvement
+# try:
+#     res_mvt = [re.search(regex_dict['com_mvt'], datas).group()]
+#     taxe_com_mvt = get_interet(res_mvt, pos_char=-2, sep=",")
+#     com_mvt = get_interet(res_mvt)
+#     comission_mouvement = {'val': com_mvt, 'taux': taxe_com_mvt}
+# except Exception as e:
+#     print(e)
 
-    # Commission découvert
-    try:
-        res_dec = [re.search(regex_dict['com_dec'], datas).group()]
-        taxe_com_dec = get_interet(res_dec, pos_char=-2, sep=",")
-        com_dec = get_interet(res_dec)
-        comission_decouvert = {'val': com_dec, 'taux': taxe_com_dec}
-    except Exception as e:
-        print(e)
+# # Commission découvert
+# try:
+#     res_dec = [re.search(regex_dict['com_dec'], datas).group()]
+#     taxe_com_dec = get_interet(res_dec, pos_char=-2, sep=",")
+#     com_dec = get_interet(res_dec)
+#     comission_decouvert = {'val': com_dec, 'taux': taxe_com_dec}
+# except Exception as e:
+#     print(e)
 
-    # TVA
-    try:
-        all_tva = [match.group() for match in re.finditer(regex_dict['tva'], datas)]
-        taux_tva = get_interet(all_tva, pos_char=-3, sep=",")
+# # TVA
+# try:
+#     all_tva = [match.group() for match in re.finditer(regex_dict['tva'], datas)]
+#     taux_tva = get_interet(all_tva, pos_char=-3, sep=",")
 
-        taxes_tva = [get_interet(string_tva, pos_char=-5) for string_tva in all_tva]
-        val_tva = ceil(sum(taxes_tva) * (taux_tva / 100))
-        tva = {}
-        tva['val'] = val_tva
-        tva['taux'] = taux_tva
+#     taxes_tva = [get_interet(string_tva, pos_char=-5) for string_tva in all_tva]
+#     val_tva = ceil(sum(taxes_tva) * (taux_tva / 100))
+#     tva = {}
+#     tva['val'] = val_tva
+#     tva['taux'] = taux_tva
 
-    except Exception as e:
-        print(e)
+# except Exception as e:
+#     print(e)
 
-    if None not in [code_agence, account_number, date_deb_arrete, date_fin_arrete]:
-        new_ech.user = current_user
-        new_ech.code_agence = code_agence
-        new_ech.num_compte = account_number
-        new_ech.date_deb_arrete = date_deb_arrete
-        new_ech.date_fin_arrete = date_fin_arrete
-        new_ech.frais_fixe = frais_fixe
-        new_ech.autorisations = autorisations
-        new_ech.interets_debiteurs = interets_debiteurs
-        new_ech.interets_crediteurs = interets_crediteurs
-        new_ech.ircm = ircm
-        new_ech.comission_mouvement = comission_mouvement
-        new_ech.comission_decouvert = comission_decouvert
-        new_ech.tva = tva
-        try:
-            new_ech.save()
-        except Exception as e:
-            print(e)
-    else:
-        return JsonResponse({"message": "Le fichier {} ne contient pas les informations de base requises".format(file)}, status=500)
+# if None not in [code_agence, account_number, date_deb_arrete, date_fin_arrete]:
+#     new_ech.user = current_user
+#     new_ech.code_agence = code_agence
+#     new_ech.num_compte = account_number
+#     new_ech.date_deb_arrete = date_deb_arrete
+#     new_ech.date_fin_arrete = date_fin_arrete
+#     new_ech.frais_fixe = frais_fixe
+#     new_ech.autorisations = autorisations
+#     new_ech.interets_debiteurs = interets_debiteurs
+#     new_ech.interets_crediteurs = interets_crediteurs
+#     new_ech.ircm = ircm
+#     new_ech.comission_mouvement = comission_mouvement
+#     new_ech.comission_decouvert = comission_decouvert
+#     new_ech.tva = tva
+#     try:
+#         new_ech.save()
+#     except Exception as e:
+#         print(e)
+# else:
+#     return JsonResponse({"message": "Le fichier {} ne contient pas les informations de base requises".format(file)}, status=500)
 
 
 # Processing functions
@@ -867,7 +928,6 @@ def computation_first_table(datas, account, type_account):
 
 
 def computation_second_table(res_data, account, type_account):
-
     # Get taux_interets_debiteurs
     taux_int_1 = account["taux_interet_0"] / 100
     taux_int_2 = account["taux_interet_1"] / 100
@@ -932,7 +992,6 @@ def computation_second_table(res_data, account, type_account):
 # COMPUTATION FOR EPARGNE
 
 def computation_second_table_epargne(res_data, account, type_account):
-
     # Get taux_interets_debiteurs
     taux_int_1 = account["taux_interet_inf"] / 100
     taux_int_2 = account["taux_interet_sup"] / 100
@@ -975,6 +1034,7 @@ def computation_second_table_epargne(res_data, account, type_account):
     calcul['TVA'].insert(0, tva)
 
     return calcul
+
 
 # END COMPUTATION EPARGNE
 

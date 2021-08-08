@@ -3,8 +3,19 @@ from datetime import datetime
 from django.contrib.auth.models import User
 
 
-# Create your models here.
+class File(models.Model):
 
+    user = models.ForeignKey(User, related_name="files", on_delete=models.CASCADE, null=True)
+    file_path = models.TextField()
+    file_type = models.CharField(max_length=20)
+    active_file =models.BooleanField(default=False)
+    date_inf = models.DateField()
+    date_sup = models.DateField()
+    longueur = models.IntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('date_inf', 'date_sup', 'longueur', 'file_type')
 
 # class Historique(models.Model):
 #     """
@@ -113,3 +124,15 @@ class Results(models.Model):
     user = models.ForeignKey(User, related_name="results", on_delete=models.CASCADE, null=True)
     result_json = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class SoldeInitial(models.Model):
+
+    user = models.ForeignKey(User, related_name="soldes", on_delete=models.CASCADE, null=True)
+    num_compte = models.CharField(max_length=20)
+    intitule = models.CharField(max_length=100)
+    solde_initial = models.IntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'num_compte')

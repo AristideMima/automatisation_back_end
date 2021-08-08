@@ -39,7 +39,6 @@ INSTALLED_APPS = [
     'corsheaders',
     'accounts',
     'filesupload',
-    'django_mysql',
 ]
 
 REST_FRAMEWORK = {
@@ -83,11 +82,11 @@ WSGI_APPLICATION = 'automatisation_arrete_backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'automatisation',
+        'NAME': 'automatisation_bd',
         'USER': 'root',
         'PASSWORD': '',
         'HOST': '127.0.0.1',
-        'PORT': '3308',
+        'PORT': '3306',
         'OPTIONS': {
             # Tell MySQLdb to connect with 'utf8mb4' character set
             'charset': 'utf8mb4',
