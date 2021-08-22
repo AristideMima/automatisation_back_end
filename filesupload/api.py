@@ -5,6 +5,8 @@ from rest_framework.permissions import IsAuthenticated
 
 
 # Historique viewset
+class UserView(viewsets.ModelViewSet):
+    serializer_class = UserSerializer
 
 
 class HistoriqueView(viewsets.ModelViewSet):

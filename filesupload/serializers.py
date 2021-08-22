@@ -1,5 +1,11 @@
 from rest_framework import serializers
-from .models import Historic,  Echelle, Results
+from .models import Historic,  Echelle, Results, User
+
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = '__all__'
 
 
 class HistoricSerializer(serializers.ModelSerializer):

@@ -1,6 +1,6 @@
 from django.db import models
 from datetime import datetime
-from django.contrib.auth.models import User
+from accounts.models import User
 
 
 class File(models.Model):
@@ -136,3 +136,12 @@ class SoldeInitial(models.Model):
 
     class Meta:
         unique_together = ('user', 'num_compte')
+
+
+class ActiveFileUser(models.Model):
+    user = models.ForeignKey(User, related_name="active_users", on_delete=models.CASCADE, null=True)
+    file = models.ForeignKey(File, related_name="active_users_files", on_delete=models.CASCADE, null=True)
+    type = models.CharField(max_length=20)
+
+    class Meta:
+        unique_together = ('user', 'file', 'type')

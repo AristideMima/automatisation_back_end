@@ -7,3 +7,5 @@ django-filter
 django-cors-headers
 mysqlclient
 Unidecode
+celery
+celery-progress

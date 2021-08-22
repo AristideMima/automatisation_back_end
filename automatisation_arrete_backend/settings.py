@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/3.2/ref/settings/
 """
 
 from pathlib import Path
+from datetime import timedelta
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -74,6 +75,8 @@ TEMPLATES = [
     },
 ]
 
+REST_KNOX = {'TOKEN_TTL': timedelta(hours=24)}
+
 WSGI_APPLICATION = 'automatisation_arrete_backend.wsgi.application'
 
 # Database
@@ -82,7 +85,7 @@ WSGI_APPLICATION = 'automatisation_arrete_backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'automatisation_bd',
+        'NAME': 'automatisation',
         'USER': 'root',
         'PASSWORD': '',
         'HOST': '127.0.0.1',
@@ -138,6 +141,18 @@ CORS_ORIGIN_ALLOW_ALL = True
 # CORS_ORIGIN_WHITELIST = [
 #     'http://localhost:3000'
 # ]
+
+CORS_EXPOSE_HEADERS = (
+    'Access-Control-Allow-Origin: http://127.0.0.1:3000',
+)
+
+
+AUTH_USER_MODEL = 'accounts.User'
+
+REST_AUTH_SERIALIZERS = {
+    'TOKEN_SERIALIZER': 'accounts.serializers.UserSerializer',
+}
+
 
 STATIC_URL = '/static/'
 

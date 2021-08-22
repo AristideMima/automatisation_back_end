@@ -44,72 +44,177 @@ def make_calcul(request):
     # Get data passed by request
     # We will compute all data separately
 
-    response_computation = []
+    # Load latest history for computation
+    # Slect
 
-    try:
-        accounts = request.data['accounts']
+    # get all request datas  & latest historic
+    datas = pd.DataFrame(request.data['accounts'])
+    dates = request.data['period']
 
-        dataframes = []
+    type_account = request.data['type_account']
 
-        for account in accounts:
+    save_history = Historic.objects.filter(user=request.user).latest('created_at').historic
 
-            data_filtering = Historique.objects.filter(num_compte=account['num_compte']).values()
+    if save_history:
+        save_history = loads(save_history)
+        historic = pd.read_json(save_history['historic'])
+    else:
+        return Response(500)
+
+    all_accounts = list(datas['num_compte'].unique())
+
+    # filter by account
+
+    date_deb = datetime.strptime(dates[0], "%Y-%m-%d")
+    date_fin = datetime.strptime(dates[1], "%Y-%m-%d")
+    historic = historic[historic['N° compte'].isin(all_accounts)]
+    historic['Date Comptable'] = pd.to_datetime(historic['Date Comptable'])
+    historic['Date de Valeur'] = pd.to_datetime(historic['Date de Valeur'])
+    historic = historic[((date_deb <= historic['Date Comptable']) & (historic['Date Comptable'] <= date_fin))]
+    historic = historic[((date_deb <= historic['Date de Valeur']) & (historic['Date de Valeur'] <= date_fin))]
+    historic['N° compte'] = historic['N° compte'].astype('str')
+    historic['N° compte'] = historic['N° compte'].str.zfill(11)
+
+    # Type : conf or reg, Fusion: True or False
+    if len(historic) == 0:
+        return Response(500)
+
+    dataframes = []
+    if request.data['conf'] == "conf":
+
+        for account in request.data["accounts"]:
+
+            data_filtering = historic[historic['N° compte'] == account["num_compte"]]
 
             if len(data_filtering) == 0:
                 return Response(500)
 
-            df = pd.DataFrame(data_filtering)
-
             # sort data by valeur date
-            filter_datas = range_file(df)
+            filter_datas = range_file(data_filtering)
 
-            first = computation_first_table(filter_datas, account)
+            if type_account == "Courant":
 
-            second = computation_second_table(pd.DataFrame(first), account)
+                first = computation_first_table(filter_datas, account, request.data['type_account'])
 
-            # Adding ecar
-            ecar = []
-            col_datas = ['interet_debiteur_1', 'interet_debiteur_2', 'commission_mvt', 'commission_dec', 'frais_fixe', 'tva']
+                second = computation_second_table(pd.DataFrame(first), account, request.data['type_account'])
 
-            ecar.append(second['INT_DEBITEURS_1'][0] - account['interet_debiteur_1'])
-            second['INT_DEBITEURS_1'].extend([account['interet_debiteur_1'], ecar[-1]])
+                # Adding ecar
+                ecar = []
+                col_datas = ['interet_0', 'interet_1', 'interet_2', 'com_mvt', 'com_dec', 'fraix_fixe', 'tva']
 
-            ecar.append(second['INT_DEBITEURS_2'][0] - account['interet_debiteur_2'])
-            second['INT_DEBITEURS_2'].extend([account['interet_debiteur_2'], ecar[-1]])
+                ecar.append(second['INT_DEBITEURS_1'][1] - account['interet_0'])
+                second['INT_DEBITEURS_1'].extend([account['interet_0'], ecar[-1]])
 
-            ecar.append(second['COM_DE_MVTS'][0] - account['commission_mvt'])
-            second['COM_DE_MVTS'].extend([account['commission_mvt'], ecar[-1]])
+                ecar.append(second['INT_DEBITEURS_2'][1] - account['interet_1'])
+                second['INT_DEBITEURS_2'].extend([account['interet_1'], ecar[-1]])
 
-            ecar.append(second['COM_DE_DVERT'][0] - account['commission_dec'])
-            second['COM_DE_DVERT'].extend([account['commission_dec'], ecar[-1]])
+                ecar.append(second['INT_DEBITEURS_3'][1] - account['interet_2'])
+                second['INT_DEBITEURS_3'].extend([account['interet_2'], ecar[-1]])
 
-            ecar.append(second['FRAIS_FIXES'][0] - account['frais_fixe'])
-            second['FRAIS_FIXES'].extend([account['frais_fixe'], ecar[-1]])
+                ecar.append(second['COM_DE_MVTS'][1] - account['com_mvt'])
+                second['COM_DE_MVTS'].extend([account['com_mvt'], ecar[-1]])
 
-            ecar.append(second['TVA'][0] - account['tva'])
-            second['TVA'].extend([account['tva'], ecar])
+                ecar.append(second['COM_DE_DVERT'][1] - account['com_dec'])
+                second['COM_DE_DVERT'].extend([account['com_dec'], ecar[-1]])
 
-            second['TOTAL'].extend([sum([account[col] for col in col_datas]), sum(ecar)])
+                ecar.append(second['FRAIS_FIXES'][1] - account['fraix_fixe'])
+                second['FRAIS_FIXES'].extend([account['fraix_fixe'], ecar[-1]])
 
-            print(second)
-            new_first = [dict(zip(first, t)) for t in zip(*first.values())]
+                ecar.append(second['TVA'][1] - account['tva'])
+                second['TVA'].extend([account['tva'], ecar[-1]])
 
-            for k in list(second.keys()):
-                res = {}
-                for key in list(first.keys())[:-5]:
-                    res[key] = " "
+                second['TOTAL'].extend([sum([account[col] for col in col_datas]), sum(ecar)])
 
-                res['SOLDES_NBR'] = k
-                res["MVTS_13"] = second[k][1]
-                res["MVTS_14"] = second[k][0]
-                res["MVTS_14"] = second[k][2]
-                res["MVTS_14"] = second[k][3]
-                new_first.append(res)
-            # new_second = [dict(zip(second, t)) for t in zip(*second.values())]            #
-            dataframes.append({'first': new_first, 'account': account})
-            # print(dataframes)
-    except Exception as e:
-        print(e)
+                new_first = [dict(zip(first, t)) for t in zip(*first.values())]
+
+                new_second = []
+
+                new_first.append({k: "" for k in list(first.keys())})
+                new_first.append({k: "" for k in list(first.keys())})
+                new_first.append(
+                    {"SOLDES": "DESIGNATION", "SOLDE_JOUR": "TAUX", "jrs": "AGIOS", "DEBITS_NBR": "AMPLITUDE",
+                     "CREDIT_NBR": "ECART"})
+
+                for i, key in enumerate(list(second.keys())):
+                    part_dict = {"col_0": key, "id": i}
+                    part_dict.update({"col_" + str(i + 1): col for i, col in enumerate(second[key])})
+                    new_second.append(part_dict)
+                    res = {'SOLDES': key, "SOLDE_JOUR": second[key][0], "jrs": second[key][1],
+                           "DEBITS_NBR": second[key][2], "CREDIT_NBR": second[key][3]}
+                    new_first.append(res)
+
+                dataframes.append({'first': new_first, 'account': account, "second": new_second})
+            elif type_account == "Epargne":
+
+                first = computation_first_table(filter_datas, account, request.data['type_account'])
+
+                second = computation_second_table_epargne(pd.DataFrame(first), account, request.data['type_account'])
+
+                ecar = []
+                col_datas = ['INT_INF', 'INT_SUP', 'IRCM', 'fraix_fixe', 'tva']
+
+                ecar.append(second['INT_INF'][1] - account['interet_inf'])
+                second['INT_INF'].extend([account['interet_inf'], ecar[-1]])
+
+                ecar.append(second['INT_SUP'][1] - account['interet_sup'])
+                second['INT_SUP'].extend([account['interet_sup'], ecar[-1]])
+
+                ecar.append(second['FRAIS_FIXES'][1] - account['frais_fixe'])
+                second['FRAIS_FIXES'].extend([account['frais_fixe'], ecar[-1]])
+
+                ecar.append(second['TVA'][1] - account['tva'])
+                second['TVA'].extend([account['tva'], ecar])
+
+                second['TOTAL'].extend([sum([account[col] for col in col_datas]), sum(ecar)])
+
+                new_first = [dict(zip(first, t)) for t in zip(*first.values())]
+
+                new_second = []
+
+                new_first.append({k: "" for k in list(first.keys())})
+                new_first.append({k: "" for k in list(first.keys())})
+                new_first.append(
+                    {"SOLDES": "DESIGNATION", "SOLDE_JOUR": "TAUX", "jrs": "AGIOS", "DEBITS_NBR": "AMPLITUDE",
+                     "CREDIT_NBR": "ECART"})
+
+                # Rename second dict keys
+                second['INTERETS <= 10 000 000'] = second.pop('INT_INF')
+                second['INTERETS > 10 000 000'] = second.pop('INT_SUP')
+
+                for i, key in enumerate(list(second.keys())):
+                    part_dict = {"col_0": key, "id": i}
+                    part_dict.update({"col_" + str(i + 1): col for i, col in enumerate(second[key])})
+                    new_second.append(part_dict)
+                    res = {'SOLDES': key, "SOLDE_JOUR": second[key][0], "jrs": second[key][1],
+                           "DEBITS_NBR": second[key][2], "CREDIT_NBR": second[key][3]}
+                    new_first.append(res)
+
+                dataframes.append({'first': new_first, 'account': account, "second": new_second})
+
+    # Regularisation part
+    elif request.data['conf'] == "reg":
+
+        datas = pd.Dataframe(request.data['accounts'])
+
+        date_deb = request.data['date_deb']
+        date_fin = request.data['date_fin']
+        operations = pd.DataFrame(request.data['operations'])
+        type_account = request.data['type_account']
+
+        # select corresponding history
+        save_history = Historic.objects.filter(user=request.user).latest('created_at').historic
+
+        if len(datas) == 0 or not save_history:
+            return Response(500)
+
+        all_accounts = list(datas['num_compte'].unique())
+
+        historic = pd.DataFrame(save_history['historic'])
+
+        # Filter by all values
+        historic = historic[(historic['N° compte'].isin(all_accounts)) and (
+            all((date_deb <= historic['Date Comptable'], historic['Date de Valeur'] <= date_fin)))]
+
     return Response({
         'data': dataframes
     })
