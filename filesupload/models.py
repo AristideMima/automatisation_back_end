@@ -145,3 +145,24 @@ class ActiveFileUser(models.Model):
 
     class Meta:
         unique_together = ('user', 'file', 'type')
+
+
+# Statistics
+# class Statistics(models.Model):
+#     user = models.ForeignKey(User, related_name="active_users", on_delete=models.CASCADE, null=True)
+#     num_compte = models.CharField(max_length=20)
+#     code_agence = models.CharField(max_length=20)
+#     type = models.CharField(max_length=20)
+#     calul = models.IntegerField()
+#     journal = models.IntegerField()
+#     date_deb_arrete = models.DateField()
+#     date_fin_arrete = models.DateField()
+#
+#     class Meta:
+#         unique_together = ('num_compte', 'date_deb_arrete', 'date_fin_arrete')
+#
+#
+# class Simulation:
+#     user = models.ForeignKey(User, related_name="active_users", on_delete=models.CASCADE, null=True)
+#     nombre_compte = models.IntegerField()
+#     created_at = models.DateTimeField(auto_now_add=True)
