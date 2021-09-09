@@ -1,3 +1,4 @@
+from __future__ import absolute_import
 from rest_framework import views
 from rest_framework.parsers import BaseParser, MultiPartParser
 from rest_framework.response import Response
@@ -42,7 +43,6 @@ PATH_OPERATIONS = "static/operations/"
 # Get some statistics
 @api_view(['GET'])
 def get_staistics(request):
-
     # Files and user count
     total_files = File.objects.count()
     total_files_solde = File.objects.filter(type="solde").count()
@@ -52,9 +52,6 @@ def get_staistics(request):
     total_user = User.objects.count()
 
 
-
-
-@shared_task(bind=True)
 def celery_function(self, seconds):
     progress_recorder = ProgressRecorder(self)
     result = 0
@@ -178,11 +175,13 @@ def retrieve_files(type, user):
             files['active_file'] = files['id'].apply(lambda x: True if x == active_id else False)
         res = files.T.to_dict().values()
     except Exception as e:
+        print(e)
         pass
 
     return res
 
 
+# @shared_task(bind=True)
 @api_view(['POST'])
 def make_calcul(request):
     # Get data passed by request
@@ -190,8 +189,6 @@ def make_calcul(request):
 
     # Read Type, Read mode
     # Load latest history for computation
-
-    default_response = JsonResponse({"message": "Informations incorrectes"}, status=500)
 
     # Load parameters
     try:
@@ -213,33 +210,40 @@ def make_calcul(request):
         int_epargne = request.data['int_epargne']
     except Exception as e:
         print(e)
-        return default_response
+        return None
 
+    print()
     # Load latest history
     try:
 
         try:
-            req = ActiveFileUser.objects.get(user=user, type="historique")
-            last_history = File.objects.get(id=req.file)
-        except:
-            last_history = File.objects.get(active_file=True, file_type="historique")
+            req = ActiveFileUser.objects.get(user_id=user.id, type="historique")
+            last_history = File.objects.get(id=req.file.id)
+        except Exception as e:
+            print(e)
+            try:
+                last_history = File.objects.get(active_file=True, file_type="historique")
+            except Exception as e:
+                print(e)
+                return Response([])
         path_history = PATH_HISTORIQUE + last_history.file_path
         history = pd.DataFrame(pd.read_csv(path_history, compression="gzip"))
         history['N° Compte'] = history['N° Compte'].astype(str).str.zfill(11)
         history['Date Comptable'] = pd.to_datetime(history['Date Comptable'])
         history['Date de Valeur'] = pd.to_datetime(history['Date de Valeur'])
 
-
     except FileNotFoundError as e:
-        return default_response
+        print(e)
+        return None
 
     # Load Journal
     try:
 
         try:
-            req = ActiveFileUser.objects.get(user=user, type="journal")
-            last_journal = File.objects.get(id=req.file)
-        except:
+            req = ActiveFileUser.objects.get(user_id=user.id, type="journal")
+            last_journal = File.objects.get(id=req.file.id)
+        except Exception as e:
+            print(e)
             last_journal = File.objects.get(active_file=True, file_type="journal")
         path_journal = PATH_JOURNAUX + last_journal.file_path
         journal = pd.DataFrame(pd.read_csv(path_journal, compression="gzip"))
@@ -256,12 +260,13 @@ def make_calcul(request):
         data_sold, data_auto = [None] * 2
         try:
             try:
-                req = ActiveFileUser.objects.get(user=user, type="solde")
-                last_solde = File.objects.get(id=req.file)
-            except:
+                req = ActiveFileUser.objects.get(user_id=user.id, type="solde")
+                last_solde = File.objects.get(id=req.file.id)
+            except Exception as e:
+                print(e)
                 last_solde = File.objects.get(active_file=True, file_type="solde")
             path_solde = PATH_SOLDE + last_solde.file_path
-            data_sold = pd.DataFrame(pd.read_csv(path_solde))
+            data_sold = pd.read_csv(path_solde)
             data_sold['N° Compte'] = data_sold['N° Compte'].astype(str).str.zfill(11)
             data_sold['Date Solde'] = pd.to_datetime(data_sold['Date Solde'])
 
@@ -269,7 +274,6 @@ def make_calcul(request):
             data_sold.sort_values(by="Date Solde", ascending=False, inplace=True)
         except Exception as e:
             print(e)
-        pass
 
         if data_sold is not None:
 
@@ -286,18 +290,20 @@ def make_calcul(request):
             # Add autorisations
             try:
                 try:
-                    req = ActiveFileUser.objects.get(user=user, type="autorisation")
+                    req = ActiveFileUser.objects.get(user_id=user.id, type="autorisation")
                     last_auto = File.objects.get(id=req.file)
-                except:
+                except Exception as e:
+                    print(e)
                     last_auto = File.objects.get(active_file=True, file_type="autorisation")
                 path_auto = PATH_AUTORISATION + last_auto.file_path
                 data_auto = pd.read_csv(path_auto, compression="gzip")
+                data_auto['Date Mise en Place'] = pd.to_datetime(data_auto['Date Mise en Place'])
+                data_auto['Date de fin'] = pd.to_datetime(data_auto['Date de fin'])
                 data_auto['N° Compte'] = data_auto['N° Compte'].astype(str).str.zfill(11)
-                data_auto = data_sold[
-                    ((date_deb >= data_sold['Date Mise en Place']) & (data_sold['Date de fin'] >= date_fin))]
+                data_auto = data_auto[((date_deb >= data_auto['Date Mise en Place']) & (data_auto['Date de fin'] >= date_fin))]
                 data_auto.sort_values(by="Montant", ascending=False, inplace=True)
-            except:
-                pass
+            except Exception as e:
+                print(e)
 
             if data_auto is not None:
                 accounts = accounts.merge(data_auto[['Date de fin', 'Date Mise en Place', 'Montant', 'N° Compte']],
@@ -320,14 +326,17 @@ def make_calcul(request):
     try:
         accounts.rename(columns={"N° Compte": "num_compte"}, inplace=True)
     except Exception as e:
-        pass
+        print(e)
 
     # Filter by account & by operations
     unique_accounts = list(accounts['num_compte'].unique())
     unique_operation = list(operations['code_operation'].unique())
     history = history[(history['N° Compte'].isin(unique_accounts) & history['Code Opération'].isin(unique_operation))]
+    libelles_pass = "(INT. CREDITEURS)|(TAXE FRAIS FIXE)|(PRELEVEMENT LIBERATOIRE)|(FRAIS FIXE)"
+    # history = history[~history['Libellé Opération'].str.contains(libelles_pass)]
     # compute real sold based on
-    restriced_history = history[(date_deb < history['Date de Valeur'])][['N° Compte', 'Montant', 'Sens']]
+    restriced_history = history[(date_deb > history['Date de Valeur'])][['N° Compte', 'Montant', 'Sens']]
+    # restriced_history_two = history[(date_fin < history['Date de Valeur'])][['N° Compte', 'Montant', 'Sens']]
 
     history = history[((date_deb <= history['Date de Valeur']) & (history['Date de Valeur'] <= date_fin))]
 
@@ -345,6 +354,7 @@ def make_calcul(request):
     if type_account == "Courant":
         for index, account in tqdm(accounts[:500].iterrows(), total=accounts[:500].shape[0]):
 
+            print("pass")
 
             filter_data = history[history['N° Compte'] == account["num_compte"]]
             if len(filter_data) == 0:
@@ -361,9 +371,9 @@ def make_calcul(request):
             #     return default_response
             #     print(e)
 
-            first = computation_first_table(filter_data, account, operations, date_deb)
+            first = computation_first_table(filter_data, account, date_deb, date_fin)
 
-            second = computation_second_table(pd.DataFrame(first), options, commision_mouvement, commission_decouvert)
+            second = computation_second_table(pd.DataFrame(first), options, commision_mouvement, commission_decouvert, operations)
 
             # Add detailled Results
             new_first = [dict(zip(first, t)) for t in zip(*first.values())]
@@ -390,18 +400,21 @@ def make_calcul(request):
                 new_first.append(res)
 
             data_first = {'first': new_first, 'account': account["num_compte"], "second": new_second}
-            # results.append({'first': new_first, 'account': account["num_compte"], "second": new_second})
 
             # Add compressed Results
+            print("pass")
             try:
+                journal_copie = journal.copy()
+                journal_copie["Numero de compte"] = journal_copie["Numero de compte"].apply(lambda x: x.split("-")[0])
                 account_journal_value = \
-                journal[journal["Numero de compte"] == account["num_compte"]]['Net client'].iloc[0]
+                journal_copie[journal_copie["Numero de compte"] == account["num_compte"].split("-")[1]][
+                    'Net client'].iloc[0]
                 ecart = (second['TOTAL'][-1]) - account_journal_value
                 data_compressed = {"id": index, "N° Compte": account["num_compte"], "Calcul": second['TOTAL'][-1],
                                    "Journal": account_journal_value, "Ecart": ecart, "date_deb": options["date_deb"],
                                    "date_fin": options["date_fin"]}
-                # compressed_results.append({"id": id, "N° Compte": account["num_compte"], "Calcul": second['TOTAL'][-1], "Journal":account_journal_value, "Ecart": ecart, "date_deb": options["date_deb"], "date_fin": options["date_fin"]})
-            except:
+            except Exception as e:
+                print(e)
                 data_compressed = {"id": index, "N° Compte": account["num_compte"], "Calcul": second['TOTAL'][-1],
                                    "Journal": "Valeur absente", "Ecart": "", "date_deb": options["date_deb"],
                                    "date_fin": options["date_fin"]}
@@ -411,19 +424,24 @@ def make_calcul(request):
             compressed_results.append(data_compressed)
     elif type_account == "Epargne":
         for index, account in tqdm(accounts[:500].iterrows(), total=accounts[:500].shape[0]):
-
+            # progress_recorder.set_progress(index)
             filter_data = history[history['N° Compte'] == account["num_compte"]]
             if len(filter_data) == 0:
                 continue
-            filter_rest = restriced_history[restriced_history['N° Compte'] == account["num_compte"]]
-            try:
-                credit = filter_rest[filter_rest.Sens == "C"]['Montant'].sum()
-                debit = filter_rest[filter_rest.Sens == "D"]['Montant'].sum()
+            # filter_rest = restriced_history[restriced_history['N° Compte'] == account["num_compte"]]
+            # filter_rest_two = restriced_history_two[restriced_history_two['N° Compte'] == account["num_compte"]]
+            # # try:
+            # #     credit = filter_rest[filter_rest.Sens == "C"]['Montant'].sum()
+            # #     debit = filter_rest[filter_rest.Sens == "D"]['Montant'].sum()
+            # #     debit2 = filter_rest_two[filter_rest_two.Sens == "D"]['Montant'].sum()
+            # #     credit2 = filter_rest_two[filter_rest_two.Sens == "C"]['Montant'].sum()
+            # #
+            # #     account['solde_initial'] = account['solde_initial'] + credit - debit + credit2 - debit2
+            # # except Exception as e:
+            # #     print(e)
+            # #     return default_response
 
-                account['solde_initial'] = account['solde_initial'] + credit - debit
-            except Exception as e:
-                print(e)
-            first = computation_first_table_epargne(filter_data, account, operations, int_epargne, date_deb)
+            first = computation_first_table_epargne(filter_data, account, operations, int_epargne, date_deb, date_fin)
 
             second = computation_second_table_epargne(pd.DataFrame(first), options, int_epargne)
 
@@ -456,7 +474,7 @@ def make_calcul(request):
             # Add compressed Results
             try:
                 account_journal_value = \
-                journal[journal["Numero de compte"] == account["num_compte"]]['Net client'].iloc[0]
+                    journal[journal["Numero de compte"] == account["num_compte"]]['Net client'].iloc[0]
                 ecart = (second['TOTAL'][-1]) - account_journal_value
                 data_compressed = {"id": index, "N° Compte": account["num_compte"], "Calcul": second['TOTAL'][-1],
                                    "Journal": account_journal_value, "Ecart": ecart, "date_deb": options["date_deb"],
@@ -470,7 +488,9 @@ def make_calcul(request):
 
             results.append(data_first)
             compressed_results.append(data_compressed)
-    return Response({"all_data": results, "compressed_data": compressed_results})
+
+    response = {"all_data": results, "compressed_data": compressed_results}
+    return Response(response)
 
 
 @api_view(['POST'])
@@ -488,9 +508,13 @@ def get_infos(request):
     try:
         try:
             req = ActiveFileUser.objects.get(user=user, type="historique")
-            last_history = File.objects.get(id=req.file)
-        except:
-            last_history = File.objects.get(active_file=True, file_type="historique")
+            last_history = File.objects.get(id=req.file.id)
+        except Exception as e:
+            print(e)
+            try:
+                last_history = File.objects.get(active_file=True, file_type="historique")
+            except:
+                return Response([])
     except FileNotFoundError as e:
         return default_data
 
@@ -503,6 +527,8 @@ def get_infos(request):
         accounts['N° Compte'] = accounts['N° Compte'].astype(str).str.zfill(11)
         operations = pd.DataFrame(pd.read_csv(path_operation, compression="gzip"))
         operations['key'] = operations.index
+        operations['com_mvt'] = True
+        operations['com_dec'] = True
 
     except Exception as e:
         print(e)
@@ -512,8 +538,8 @@ def get_infos(request):
     data_sold, data_auto = [None] * 2
     try:
         try:
-            req = ActiveFileUser.objects.get(user=user, type="solde")
-            last_solde = File.objects.get(id=req.file)
+            req = ActiveFileUser.objects.get(user_id=user, type="solde")
+            last_solde = File.objects.get(id=req.file.id)
         except:
             last_solde = File.objects.get(active_file=True, file_type="solde")
         path_solde = PATH_SOLDE + last_solde.file_path
@@ -526,7 +552,7 @@ def get_infos(request):
     if data_sold is not None:
 
         accounts = accounts.merge(data_sold[['N° Compte', 'Solde']], on='N° Compte', how="left")
-        # accounts = accounts.groupby(['N° Compte']).first().reset_index()
+        accounts = accounts.groupby(['N° Compte']).first().reset_index()
         accounts.rename(columns={"Solde": "solde_initial"}, inplace=True)
         accounts['solde_initial'].fillna(0, inplace=True)
 
@@ -538,8 +564,8 @@ def get_infos(request):
         # Add autorisations
         try:
             try:
-                req = ActiveFileUser.objects.get(user=user, type="autorisation")
-                last_auto = File.objects.get(id=req.file)
+                req = ActiveFileUser.objects.get(user_id=user, type="autorisation")
+                last_auto = File.objects.get(id=req.file.id)
             except:
                 last_auto = File.objects.get(active_file=True, file_type="autorisation")
 
@@ -552,7 +578,7 @@ def get_infos(request):
         if data_auto is not None:
             accounts = accounts.merge(data_auto[['Date de fin', 'Date Mise en Place', 'Montant', 'N° Compte']],
                                       on='N° Compte', how="left")
-            # accounts = accounts.groupby(['N° Compte']).first().reset_index()
+            accounts = accounts.groupby(['N° Compte']).first().reset_index()
             accounts.rename(columns={'Date de fin': 'fin_autorisation', 'Montant': 'montant',
                                      'Date Mise en Place': 'debut_autorisation'}, inplace=True)
             accounts['montant'].fillna(0, inplace=True)
@@ -603,14 +629,14 @@ class FileUpload(views.APIView):
         if choice == "historique":
 
             try:
-                datas = pd.read_csv(file, header=None, low_memory=False, sep="|")
-                datas.rename(columns={0: "Date Comptable", 1: "Code Agence", 2: "N° Compte", 3: "Devise", 5: "Sens",
-                                      6: "Montant", 7: "Code Opération", 8: "Libellé Opération", 10: "Date de Valeur"},
-                             inplace=True)
+                datas = pd.read_csv(file, low_memory=False)
+                # datas.rename(columns={0: "Date Comptable", 1: "Code Agence", 2: "N° Compte", 3: "Devise", 5: "Sens",
+                #                       6: "Montant", 7: "Code Opération", 8: "Libellé Opération", 10: "Date de Valeur"},
+                #              inplace=True)
                 cols = ["Date Comptable", "Code Agence", "N° Compte", "Sens", "Montant", "Code Opération",
                         "Libellé Opération", "Date de Valeur"]
 
-                # Will be drop later 
+                # Will be drop later
                 datas.dropna(subset=cols, inplace=True)
 
                 final_data = datas[cols]
@@ -621,19 +647,23 @@ class FileUpload(views.APIView):
                 final_data['Date Comptable'] = pd.to_datetime(final_data['Date Comptable'], errors="ignore").dt.date
                 final_data['Date de Valeur'] = pd.to_datetime(final_data['Date de Valeur'], errors="ignore").dt.date
 
-                final_data["Code Opération"] = final_data["Code Opération"].astype(int)
+                try:
+                    final_data["Code Opération"] = final_data["Code Opération"].astype(int)
+                except Exception as e:
+                    print(list(final_data["Code Opération"].unique()))
+                    print(e)
+                    return Response(500)
 
                 # Str columns
-                for col in ["Sens", "Libellé Opération", "Code Opération", "Code Agence",
-                            "Montant"]:
+                for col in ["Sens", "Libellé Opération", "Code Opération", "Code Agence", "Montant"]:
                     final_data[col] = final_data[col].astype(str)
 
                 final_data['N° Compte'] = final_data['N° Compte'].apply(lambda x: str(x).zfill(11))
                 final_data['Code Agence'] = final_data['Code Agence'].apply(lambda x: str(x).zfill(5))
-                final_data['N° Compte'] = final_data['Code Agence'] + "-" + final_data['N° Compte']
+                # final_data['N° Compte'] = final_data['Code Agence'] + "-" + final_data['N° Compte']
 
                 # Processing Amount
-                final_data['Montant'] = final_data['Montant'].apply(lambda x: int(x.split(",")[0]))
+                final_data['Montant'] = final_data['Montant'].apply(lambda x: int(float(x.split(",")[0])))
                 comptes = pd.DataFrame({"N° Compte": final_data['N° Compte'].unique()})
                 comptes['Type de Compte'] = final_data['N° Compte'].apply(
                     lambda x: "Epargne" if x[-4:-1] == "110" else "Courant")
@@ -649,7 +679,7 @@ class FileUpload(views.APIView):
                 with open(CODES_PATH, "r") as file_codes:
                     codes = load(file_codes)
 
-                operations['libelle_operation'] = operations['Code Opération'].apply(fill_operation)
+                operations['Code Opération'] = operations['Code Opération'].apply(fill_operation)
                 operations.rename(columns={"Code Opération": "code_operation"}, inplace=True)
 
                 # save datas 
@@ -664,7 +694,8 @@ class FileUpload(views.APIView):
 
                 res = save_file(request.user, file_path, choice, options)
                 if res is not None:
-                    return JsonResponse({"message": "Le fichier {} est déjà présent en base de données".format(file)},status=500)
+                    return JsonResponse({"message": "Le fichier {} est déjà présent en base de données".format(file)},
+                                        status=500)
 
                 final_data.to_csv(path_histo, index=False, compression="gzip")
                 comptes.to_csv(path_compte, index=False, compression="gzip")
@@ -681,20 +712,20 @@ class FileUpload(views.APIView):
             # Loading all initial soldes inside the data base
             try:
 
-                datas_soldes = pd.read_csv(file, header=None, sep='|')
-                datas_soldes.rename(
-                    columns={0: "Code Agence", 1: "Devise", 2: "N° Compte", 3: "Année", 4: "Mois", 6: "Date Solde",
-                             7: "Solde", 8: "Date Mois Suivant"}, inplace=True)
+                datas_soldes = pd.read_csv(file)
+                # datas_soldes.rename(
+                #     columns={0: "Code Agence", 2: "N° Compte", 6: "Date Solde",
+                #              7: "Solde"}, inplace=True)
 
                 datas_soldes['N° Compte'] = datas_soldes['N° Compte'].apply(lambda x: str(x).zfill(11))
-                datas_soldes['Code Agence'] = datas_soldes['Code Agence'].apply(lambda x: str(x).zfill(5))
+                # datas_soldes['Code Agence'] = datas_soldes['Code Agence'].apply(lambda x: str(x).zfill(5))
                 datas_soldes['Date Solde'] = pd.to_datetime(datas_soldes['Date Solde'], errors="ignore").dt.date
-                datas_soldes['N° Compte'] = datas_soldes['Code Agence'] + "-" + datas_soldes['N° Compte']
+                # datas_soldes['N° Compte'] = datas_soldes['Code Agence'] + "-" + datas_soldes['N° Compte']
                 # datas_soldes['Date Mois Suivant'] = pd.to_datetime(datas_soldes['Date Mois Suivant'],
                 #                                                    errors="ignore").dt.date
                 # datas_soldes.sort_values(by='Date Solde', ascending=False, inplace=True)
-                # datas_soldes.drop_duplicates(subset='N° Compte', keep='first', inplace=True)
-                datas_soldes['Solde'] = datas_soldes['Solde'].apply(lambda x: int(x.split(",")[0]))
+                datas_soldes.drop_duplicates(subset='N° Compte', keep='first', inplace=True)
+                datas_soldes['Solde'] = datas_soldes['Solde'].apply(lambda x: int(str(x).split(",")[0]))
                 datas_soldes = datas_soldes[['N° Compte', 'Solde', 'Date Solde']]
                 # datas_soldes['Mois'] = datas_soldes['Mois'].apply(lambda x: int(x.split(",")[0]))
 
@@ -746,14 +777,15 @@ class FileUpload(views.APIView):
                     return JsonResponse({"message": "Le fichier {} contient des valeurs nulles".format(file)},
                                         status=500)
 
-                datas_autorisations['Date Mise en Place'] = pd.to_datetime(datas_autorisations['Date Mise en Place']).dt.date
+                datas_autorisations['Date Mise en Place'] = pd.to_datetime(
+                    datas_autorisations['Date Mise en Place']).dt.date
                 datas_autorisations['Date de fin'] = pd.to_datetime(datas_autorisations['Date de fin']).dt.date
                 datas_autorisations['Montant'] = datas_autorisations['Montant'].apply(lambda x: int(x.split(",")[0]))
                 # datas_autorisations.sort_values(by='Date Mise en Place', ascending=False, inplace=True)
                 # datas_autorisations.drop_duplicates(subset='N° Compte', keep='first', inplace=True)
                 datas_autorisations['N° Compte'] = datas_autorisations['N° Compte'].apply(lambda x: str(x).zfill(11))
                 datas_autorisations['Code Agence'] = datas_autorisations['Code Agence'].apply(lambda x: str(x).zfill(5))
-                datas_autorisations['N° Compte'] = datas_autorisations['Code Agence'] + "-" + datas_autorisations['N° Compte']
+                # datas_autorisations['N° Compte'] = datas_autorisations['Code Agence'] + "-" + datas_autorisations['N° Compte']
                 path_auto = PATH_AUTORISATION + file_path
 
                 try:
@@ -780,15 +812,15 @@ class FileUpload(views.APIView):
 
         elif choice == "journal":
             try:
-                data_journal = pd.read_csv(file, sep=";")
-                data_journal.rename(
-                    columns={0: "Numero de compte", 1: "Net client"}, inplace=True)
+                data_journal = pd.read_csv(file)
+                # data_journal.rename(
+                #     columns={0: "Numero de compte", 1: "Net client"}, inplace=True)
                 data_journal.drop_duplicates(subset="Numero de compte", inplace=True)
-                new_data_journal = data_journal[['Numero de compte', 'Net client']]
+                new_data_journal = data_journal[['Numero de compte', 'Net client']].copy()
                 new_data_journal.dropna(inplace=True)
                 new_data_journal["Numero de compte"] = new_data_journal["Numero de compte"].astype(str)
                 new_data_journal["Numero de compte"] = new_data_journal["Numero de compte"].apply(clean_account)
-                new_data_journal["Net client"] = new_data_journal["Net client"].apply(clean_net_client)
+                new_data_journal["Net client"] = new_data_journal["Net client"].astype(int)
 
                 try:
                     modify_last_record(choice)
@@ -808,9 +840,8 @@ class FileUpload(views.APIView):
 
                 res = save_file(request.user, file_path, choice, options)
                 if res is not None:
-                    return JsonResponse(
-                        {"message": "Le fichier {} est déjà présent en base de données".format(file)},
-                        status=500)
+                    return JsonResponse({"message": "Le fichier {} est déjà présent en base de données".format(file)},
+                                        status=500)
 
                 new_data_journal.to_csv(path_journal, compression="gzip")
             except Exception as e:
@@ -829,7 +860,7 @@ def clean_net_client(net_client):
 
 
 def clean_account(account):
-    res = account.split()[0]
+    res = account.split("-")[0]
 
     res = str(res).zfill(11)
 
@@ -884,13 +915,11 @@ def range_file(data_excel):
 # ----- System conform computation -----#
 
 # Computation function for courant
-def computation_first_table(datas, account, operations, date_deb):
+def computation_first_table(datas, account, date_deb, date_fin):
     # Initialization
     cols = ['CPTABLE', 'VALEUR', 'LIBELLES', 'DEBIT_MVTS', 'CREDIT_MVTS', 'SOLDES', 'SOLDE_JOUR', 'jrs', 'DEBITS_NBR',
-            'CREDIT_NBR', 'SOLDES_NBR', 'MVTS_13', 'MVTS_14']
+            'CREDIT_NBR', 'SOLDES_NBR', 'MVTS_13', 'MVTS_14', "code_operation"]
     res_data = {col: [] for col in cols}
-
-    # Initialization
 
     # Computation part
 
@@ -913,6 +942,7 @@ def computation_first_table(datas, account, operations, date_deb):
     res_data['VALEUR'].append(date_initiale.strftime('%d/%m/%Y'))
     res_data['CPTABLE'].append("")
     res_data['LIBELLES'].append("SOLDE INITIAL")
+    res_data['code_operation'].append(-33)
 
     if sold <= 0:
         res_data['DEBIT_MVTS'].append(-1 * sold)
@@ -957,7 +987,7 @@ def computation_first_table(datas, account, operations, date_deb):
         date_cpt = temp_datas.iloc[i]['Date Comptable']
         date_val = date_valeur[i]
         code_operation = temp_datas.iloc[i]['Code Opération']
-        row_code_operation = operations[operations.code_operation == code_operation].iloc[0]
+        res_data['code_operation'].append(code_operation)
 
         res_data['CPTABLE'].append(date_cpt.strftime('%d/%m/%Y'))
         res_data['VALEUR'].append(date_val.strftime('%d/%m/%Y'))
@@ -981,10 +1011,10 @@ def computation_first_table(datas, account, operations, date_deb):
         soldes += res_data['CREDIT_MVTS'][-1] - res_data['DEBIT_MVTS'][-1]
         res_data['SOLDES'].append(soldes)
 
-        if j < l - 1:
+        if j < l:
             jrs = abs((date_valeur[j] - date_val).days)
         else:
-            jrs = 0
+            jrs = abs((date_fin - date_val).days)
         j = j + 1
 
         res_data['SOLDE_JOUR'].append(soldes if jrs != 0 else 0)
@@ -1011,12 +1041,13 @@ def computation_first_table(datas, account, operations, date_deb):
                 res_data['MVTS_13'].append(0)
         else:
             res_data['MVTS_13'].append(0)
+
         mvt_14 = debit_nombre - res_data['MVTS_13'][-1]
         res_data['MVTS_14'].append(mvt_14)
     return res_data
 
 
-def computation_second_table(res_data, options, commision_mouvement, commission_decouvert):
+def computation_second_table(res_data, options, commision_mouvement, commission_decouvert, operations):
     # Get taux_interets_debiteurs
     taux_int_1 = options['taux_interet_debiteur_1'] / 100
     taux_int_2 = options["taux_interet_debiteur_2"] / 100
@@ -1024,7 +1055,7 @@ def computation_second_table(res_data, options, commision_mouvement, commission_
     taux_com_mvts = options["taux_commision_mouvement"] / 100
     taux_com_dec = options["taux_commision_decouvert"] / 100
     tva = options["taux_tva"] / 100
-    frais_fixe = 0
+    frais_fixe = 5_000
 
     cols_calcul = ['INT_DEBITEURS_1', 'INT_DEBITEURS_2', 'INT_DEBITEURS_3', 'COM_DE_MVTS', 'COM_DE_DVERT',
                    'FRAIS_FIXES', 'TVA', 'TOTAL']
@@ -1032,34 +1063,39 @@ def computation_second_table(res_data, options, commision_mouvement, commission_
 
     # # 14
     res = (sum(res_data['MVTS_13']) * taux_int_1) / 360
-    calcul['INT_DEBITEURS_1'].append(ceil(res))
+    calcul['INT_DEBITEURS_1'].append(int(res))
 
     # 15
     res = (sum(res_data['MVTS_14']) * taux_int_2) / 360
-    calcul['INT_DEBITEURS_2'].append(ceil(res))
+    calcul['INT_DEBITEURS_2'].append(int(res))
 
     res = (sum(res_data['MVTS_14']) * taux_int_3) / 360
-    calcul['INT_DEBITEURS_3'].append(ceil(res))
+    calcul['INT_DEBITEURS_3'].append(int(res))
 
     # 16
+    if not commision_mouvement or not commission_decouvert:
+        df = pd.DataFrame(res_data)
+        df = df.merge(pd.DataFrame(operations)[['code_operation', 'com_dec', 'com_mvt']], on="code_operation", how="left")
 
-    if not commision_mouvement:
-        seuil = 2000
+        if not commision_mouvement:
+            df_mvt_sum = df[df['com_mvt'] == True]['DEBIT_MVTS'].sum()
+            seuil = 2000
 
-        int_sum = sum(res_data['DEBIT_MVTS'][1:]) * taux_com_mvts
+            int_sum = df_mvt_sum * taux_com_mvts
 
-        res = seuil if int_sum < seuil else int_sum
-        calcul['COM_DE_MVTS'].append(ceil(res))
-    else:
-        calcul['COM_DE_MVTS'].append(0)
+            res = seuil if int_sum < seuil else int_sum
+            calcul['COM_DE_MVTS'].append(int(res))
+        else:
+            calcul['COM_DE_MVTS'].append(0)
 
-    # 17
-    if not commission_decouvert:
-        total_plus_fort = min(res_data['SOLDE_JOUR'])
-        res = 0 if total_plus_fort >= 0 else -total_plus_fort * taux_com_dec
-        calcul['COM_DE_DVERT'].append(ceil(res))
-    else:
-        calcul['COM_DE_DVERT'].append(0)
+        # 17
+        if not commission_decouvert:
+            df_dec_min = df[df['com_mvt'] == True]['SOLDE_JOUR'].min()
+            total_plus_fort = df_dec_min
+            res = 0 if total_plus_fort >= 0 else -total_plus_fort * taux_com_dec
+            calcul['COM_DE_DVERT'].append(int(res))
+        else:
+            calcul['COM_DE_DVERT'].append(0)
     # 18
     calcul['FRAIS_FIXES'].append(frais_fixe)
 
@@ -1086,7 +1122,7 @@ def computation_second_table(res_data, options, commision_mouvement, commission_
 
 # COMPUTATION FOR EPARGNE
 
-def computation_first_table_epargne(datas, account, operations, int_epargne, date_deb):
+def computation_first_table_epargne(datas, account, operations, int_epargne, date_deb, date_fin):
     # Initialization
     cols = ['CPTABLE', 'VALEUR', 'LIBELLES', 'DEBIT_MVTS', 'CREDIT_MVTS', 'SOLDES', 'SOLDE_JOUR', 'jrs', 'DEBITS_NBR',
             'CREDIT_NBR', 'SOLDES_NBR', 'MVTS_13', 'MVTS_14']
@@ -1140,9 +1176,9 @@ def computation_first_table_epargne(datas, account, operations, int_epargne, dat
     for i in range(len(date_valeur)):
 
         libelle = temp_datas.iloc[i]['Libellé Opération']
-        # res = [lib in libelle for lib in libelles_pass]
-        # if any(res):
-        #     continue
+        res = [lib in libelle for lib in libelles_pass]
+        if any(res):
+            continue
 
         # 1 et 2
         date_cpt = temp_datas.iloc[i]['Date Comptable']
@@ -1170,10 +1206,12 @@ def computation_first_table_epargne(datas, account, operations, int_epargne, dat
         soldes += res_data['CREDIT_MVTS'][-1] - res_data['DEBIT_MVTS'][-1]
         res_data['SOLDES'].append(soldes)
 
-        if j < l - 1:
+        if j < l:
             jrs = abs((date_valeur[j] - date_val).days)
         else:
-            jrs = 0
+            jrs = abs((date_fin - date_val).days)
+
+        # jrs = abs((date_valeur[j] - date_val).days)
         j = j + 1
 
         res_data['SOLDE_JOUR'].append(soldes if jrs != 0 else 0)
@@ -1203,7 +1241,7 @@ def computation_second_table_epargne(res_data, options, int_epargne):
     taux_int_2 = float(options["taux_interet_superieur"]) / 100
     taux_ircm = float(options["taux_ircm"]) / 100
     tva = float(options["taux_tva"]) / 100
-    frais_fixe = 0
+    frais_fixe = 2000
     comp_dec_epargne = 10_000_000 if int_epargne else 50_000_000
 
     int_inf = 'INT_SUP <= {}'.format(comp_dec_epargne)
@@ -1223,7 +1261,7 @@ def computation_second_table_epargne(res_data, options, int_epargne):
 
     # 15
     res = calcul[int_sup][-1] * taux_ircm
-    calcul['IRCM'].append(0)
+    calcul['IRCM'].append(ceil(res))
 
     # 18
     calcul['FRAIS_FIXES'].append(frais_fixe)
@@ -1232,10 +1270,13 @@ def computation_second_table_epargne(res_data, options, int_epargne):
 
     calcul['TVA'].append(ceil(inter))
 
-    inter = [calcul[l] for l in list(calcul.keys())[:-1]]
-    val = list(map(sum, zip(*inter)))[0]
+    # inter = [calcul[l] for l in list(calcul.keys())[:-1]]
+    # val = list(map(sum, zip(*inter)))[0]
 
-    calcul['TOTAL'].extend(["", val])
+    val_total = calcul[int_inf][-1] + calcul[int_sup][-1] - calcul['TVA'][-1] - calcul['FRAIS_FIXES'][-1] - \
+                calcul['IRCM'][-1]
+
+    calcul['TOTAL'].extend(["", val_total])
 
     calcul[int_inf].insert(0, taux_int_1)
     calcul[int_sup].insert(0, taux_int_2)

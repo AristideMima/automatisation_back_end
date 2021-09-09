@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-ml4j$17gtdci&^(dom24c_-now4l@9nzw+v^ume+=!a!b(xq6h
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['127.0.0.1']
 
 # Application definition
 
@@ -84,16 +84,16 @@ WSGI_APPLICATION = 'automatisation_arrete_backend.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
+        'ENGINE': 'django.db.backends.postgresql_psycopg2',
         'NAME': 'automatisation',
-        'USER': 'root',
-        'PASSWORD': '',
-        'HOST': '127.0.0.1',
-        'PORT': '3306',
-        'OPTIONS': {
-            # Tell MySQLdb to connect with 'utf8mb4' character set
-            'charset': 'utf8mb4',
-        },
+        'USER': 'aristide',
+        'PASSWORD': 'arispass',
+        'HOST': 'localhost',
+        'PORT': '5432',
+        # 'OPTIONS': {
+        #     # Tell MySQLdb to connect with 'utf8mb4' character set
+        #     'charset': 'utf8mb4 ',
+        # },
         # Tell Django to build the test database with the 'utf8mb4' character set
         'TEST': {
             'CHARSET': 'utf8mb4',
@@ -138,9 +138,9 @@ USE_TZ = False
 
 CORS_ORIGIN_ALLOW_ALL = True
 
-# CORS_ORIGIN_WHITELIST = [
-#     'http://localhost:3000'
-# ]
+CORS_ORIGIN_WHITELIST = [
+    'http://localhost:3000'
+]
 
 CORS_EXPOSE_HEADERS = (
     'Access-Control-Allow-Origin: http://127.0.0.1:3000',
