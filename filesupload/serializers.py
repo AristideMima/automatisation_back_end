@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Historic,  Echelle, Results, User
+from .models import User
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -8,10 +8,10 @@ class UserSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class HistoricSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Historic
-        fields = '__all__'
+# class HistoricSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = Historic
+#         fields = '__all__'
 
 
 # class CompteSerializer(serializers.ModelSerializer):
@@ -27,13 +27,13 @@ class HistoricSerializer(serializers.ModelSerializer):
 #         fields = '__all__'
 
 
-class EchelleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Echelle
-        fields = '___all__'
-
-
-class ResultsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Results
-        fields = '___all__'
+# class EchelleSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = Echelle
+#         fields = '___all__'
+#
+#
+# class ResultsSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = Results
+#         fields = '___all__'

@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/3.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
+from .constants import *
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,7 +26,7 @@ SECRET_KEY = 'django-insecure-ml4j$17gtdci&^(dom24c_-now4l@9nzw+v^ume+=!a!b(xq6h
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1']
+# ALLOWED_HOSTS = ['127.0.0.1', "*"]
 
 # Application definition
 
@@ -85,11 +86,11 @@ WSGI_APPLICATION = 'automatisation_arrete_backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': 'automatisation',
-        'USER': 'aristide',
-        'PASSWORD': 'arispass',
-        'HOST': 'localhost',
-        'PORT': '5432',
+        'NAME': db_name,
+        'USER': db_user,
+        'PASSWORD': db_password,
+        'HOST': db_host,
+        'PORT': db_port,
         # 'OPTIONS': {
         #     # Tell MySQLdb to connect with 'utf8mb4' character set
         #     'charset': 'utf8mb4 ',
@@ -143,7 +144,8 @@ CORS_ORIGIN_WHITELIST = [
 ]
 
 CORS_EXPOSE_HEADERS = (
-    'Access-Control-Allow-Origin: http://127.0.0.1:3000',
+    # 'Access-Control-Allow-Origin: http://127.0.0.1:3000',
+    'Access-Control-Allow-Origin: http://172.21.88.31:16000',
 )
 
 

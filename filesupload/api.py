@@ -9,14 +9,14 @@ class UserView(viewsets.ModelViewSet):
     serializer_class = UserSerializer
 
 
-class HistoriqueView(viewsets.ModelViewSet):
-
-    permission_classes = [IsAuthenticated]
-
-    serializer_class = HistoricSerializer
-
-    def get_queryset(self):
-        return self.request.user.historics
+# class HistoriqueView(viewsets.ModelViewSet):
+#
+#     permission_classes = [IsAuthenticated]
+#
+#     serializer_class = HistoricSerializer
+#
+#     def get_queryset(self):
+#         return self.request.user.historics
 
 
 # class CompteView(viewsets.ModelViewSet):
@@ -34,19 +34,19 @@ class HistoriqueView(viewsets.ModelViewSet):
 #     serializer_class = OperationSerializer
 
 
-class EchelleView(viewsets.ModelViewSet):
+# class EchelleView(viewsets.ModelViewSet):
+#
+#     permission_classes = [IsAuthenticated]
+#     serializer_class = EchelleSerializer
+#
+#     def get_queryset(self):
+#         return self.request.user.echelles
 
-    permission_classes = [IsAuthenticated]
-    serializer_class = EchelleSerializer
 
-    def get_queryset(self):
-        return self.request.user.echelles
-
-
-class ResultView(viewsets.ModelViewSet):
-
-    permission_classes = [IsAuthenticated]
-    serializer_class = ResultsSerializer
-
-    def get_queryset(self):
-        return self.request.user.results
+# class ResultView(viewsets.ModelViewSet):
+#
+#     permission_classes = [IsAuthenticated]
+#     serializer_class = ResultsSerializer
+#
+#     def get_queryset(self):
+#         return self.request.user.results

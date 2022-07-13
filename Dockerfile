@@ -1,34 +1,26 @@
-# FROM postgres
-# ENV POSTGRES_PASSWORD djoudken
-# ENV POSTGRES_DB nano_credit
-# COPY nano_credit.sql /docker-entrypoint-initdb.d/
-# RUN python manage.py makemigrations
-# RUN python manage.py migrate
+# pull official base image
+FROM python:3.8.3-alpine
 
-FROM python:3.8.8-alpine
+# set work directory
+WORKDIR /usr/src/web
+
+# set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
-RUN mkdir /djangoBackend
-WORKDIR /djangoBackend
-COPY requirements.txt /code/
-EXPOSE 8000
-RUN pip install -r requirements.txt
+
+# install psycopg2 dependencies
+RUN apk update \
+    && apk add postgresql-dev gcc python3-dev musl-dev
+
+# install nodejs
+RUN apk add --update nodejs nodejs-npm
+
+# copy project
 COPY . .
 
-#COPY ./services/settings.py /code/services/services.py
-#COPY ./automatisation/settings.py /code/automatisation/settings.py
-#COPY ./.envcontainer /code/.env
-#CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+# install dependencies
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
 
-
-
-
-# FROM python:3
-# ENV PYTHONUNBUFFERED 1
-# RUN mkdir /backend
-# WORKDIR /backend
-# COPY requirements.txt /backend/
-# EXPOSE 8000
-# RUN pip install -r requirements.txt
-# COPY . /backend/
-# RUN python manage.py makemigrations
-# RUN python manage.py migrate
+# run entrypoint.sh
+ENTRYPOINT ["/usr/src/web/entrypoint.sh"]

@@ -395,6 +395,7 @@ def load_data_txt(data_txt):
         'com_mvt': 'COMMISSION DE MOUVEMENT({})+'.format(reg_numb),
         'com_dec': ' COMMISSION/PLUS FORT DECOUVERT({})+'.format(reg_numb),
         'int_debit': ' INTERETS DEBITEURS({})+'.format(reg_numb),
+        'int_credit': ' INTERETS DEBITEURS({})+'.format(reg_numb),
         'frais_fixe': 'FRAIS FIXES{}'.format(reg_numb),
         'net_deb': 'NET A DEBITER{}'.format(reg_numb),
         'solde_val': 'SOLDE EN VALEUR APRES AGIOS{}'.format(reg_numb),

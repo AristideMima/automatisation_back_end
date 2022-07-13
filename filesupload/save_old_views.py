@@ -1,21 +1,15 @@
-from django.shortcuts import render
 from rest_framework import views
 from rest_framework.parsers import BaseParser, MultiPartParser
 from rest_framework.response import Response
-from django.http.response import StreamingHttpResponse
 import pandas as pd
-import pathlib
 from datetime import date, datetime, timedelta
 from .models import *
-from django.utils.timezone import utc, now
 import re
 from unidecode import unidecode
 from rest_framework.decorators import api_view
-from io import StringIO
 from math import ceil
 from json import load, dumps, loads
 from rest_framework.permissions import IsAuthenticated
-from django.core import serializers
 from django.http import JsonResponse
 
 # Constant declarations
@@ -703,7 +697,7 @@ def load_data_txt(datas_txt, current_user, file):
         'code': '\d{4} -',
         'account': 'XAF-\d{11}-\d{2}',
         'dates': '(\d\d)[-/](\d\d)[-/](\d\d(?:\d\d)?)',
-        'amount': '([0-9]+\.)+(\d{3}) XAF',
+        'amount': '([0-9]+[\.])+(\d{3}) XAF',
         'taxe_frais': 'TAXE/FRAIS{} ( )* TVA '.format(reg_numb),
         'com_mvt': ' COMMISSION DE MOUVEMENT({})+'.format(reg_numb),
         'com_dec': ' COMMISSION/PLUS FORT DECOUVERT({})+'.format(reg_numb),
@@ -712,8 +706,7 @@ def load_data_txt(datas_txt, current_user, file):
         'frais_fixe': 'FRAIS FIXES{}'.format(reg_numb),
         'net_deb': 'NET A DEBITER{}'.format(reg_numb),
         'solde_val': 'SOLDE EN VALEUR APRES AGIOS{}'.format(reg_numb),
-        'tva': '(TAXE/INTERETS DEBITEURS|TAXE/COMM. PLUS FORT DECOUVERT|TAXE/COMMISSION DE MOUVEMENT|TAXE/FRAIS)({})+( )*'.format(
-            reg_numb),
+        'tva': '(TAXE/INTERETS DEBITEURS|TAXE/COMM. PLUS FORT DECOUVERT|TAXE/COMMISSION DE MOUVEMENT|TAXE/FRAIS)({})+( )*'.format(reg_numb),
         'ircm': 'PRELEVEMENT LIBERATOIRE a compter du ( )* {}( )*({})+'.format(date_reg, reg_numb)
     }
 
